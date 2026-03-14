@@ -11,6 +11,7 @@ import servicesRouter from "./routes/services.js";
 import knowledgeBaseRouter from "./routes/knowledgeBase.js";
 import remediationRouter from "./routes/remediation.js";
 import consoleRouter, { purgeOldSessions } from "./routes/console.js";
+import setupRouter from "./routes/setup.js";
 import { errorHandler } from "./middleware/error.js";
 import { startHeartbeatMonitor } from "./lib/heartbeat.js";
 
@@ -78,6 +79,7 @@ app.use("/api/services", servicesRouter);
 app.use("/api/knowledge-base", knowledgeBaseRouter);
 app.use("/api/remediation", remediationRouter);
 app.use("/api/console", consoleRouter);
+app.use("/api/setup", setupRouter);
 
 // ─── Error handler ───────────────────────────────────────────────────────────
 app.use(errorHandler);

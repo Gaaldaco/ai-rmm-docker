@@ -3,65 +3,24 @@ set -e
 
 cd "$(dirname "$0")"
 
-ENV_FILE=".env"
-SETUP_CONTAINER="ai-rmm-setup"
-
-# ─── Check if .env exists with required values ─────────────────────────────
-needs_setup() {
-  if [ ! -f "$ENV_FILE" ]; then
-    return 0
-  fi
-  # Check for required values (not just the key, but an actual value)
-  if ! grep -q "ANTHROPIC_API_KEY=sk-" "$ENV_FILE" 2>/dev/null; then
-    return 0
-  fi
-  if ! grep -qP "POSTGRES_PASSWORD=.{8,}" "$ENV_FILE" 2>/dev/null; then
-    return 0
-  fi
-  return 1
-}
-
-if needs_setup; then
+# ─── Check prerequisites ──────────────────────────────────────────────────────
+if ! command -v docker &>/dev/null; then
   echo ""
-  echo "╔══════════════════════════════════════════════════════════╗"
-  echo "║           AI Remote Service — First-Time Setup          ║"
-  echo "╚══════════════════════════════════════════════════════════╝"
+  echo "Error: Docker is not installed."
   echo ""
-  echo "  No configuration found. Starting setup wizard..."
+  echo "Install Docker first:"
+  echo "  https://docs.docker.com/get-docker/"
   echo ""
+  echo "Or if deploying to a cloud platform (Railway, Render, etc.),"
+  echo "just deploy the repo directly — the setup wizard will appear"
+  echo "in your browser when you open the app."
+  exit 1
+fi
 
-  # Build and run the setup container
-  docker build -t "$SETUP_CONTAINER" ./setup -q
-
-  docker run --rm -it \
-    -p 3000:3000 \
-    -v "$(pwd):/data" \
-    -e ENV_PATH=/data/.env \
-    --name "$SETUP_CONTAINER" \
-    "$SETUP_CONTAINER" &
-
-  SETUP_PID=$!
-
-  echo "  ➜  Open http://localhost:3000 in your browser"
-  echo "     to complete setup."
-  echo ""
-  echo "  Waiting for setup to complete..."
-  echo "  (Press Ctrl+C to cancel)"
-  echo ""
-
-  # Wait for .env to be written
-  while needs_setup; do
-    sleep 2
-  done
-
-  echo "  ✓ Configuration saved!"
-  echo ""
-
-  # Stop the setup container
-  docker stop "$SETUP_CONTAINER" 2>/dev/null || true
-  wait $SETUP_PID 2>/dev/null || true
-
-  sleep 1
+if ! docker compose version &>/dev/null; then
+  echo "Error: Docker Compose is not available."
+  echo "Install Docker Compose: https://docs.docker.com/compose/install/"
+  exit 1
 fi
 
 echo ""
@@ -72,17 +31,15 @@ echo ""
 
 docker compose up -d --build
 
-echo ""
-echo "  ✓ All services started!"
-echo ""
-
-# Read ports from .env
-WEB_PORT=$(grep "^WEB_PORT=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "3000")
-API_PORT=$(grep "^API_PORT=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 || echo "8080")
+WEB_PORT=$(grep "^WEB_PORT=" .env 2>/dev/null | cut -d'=' -f2 || echo "3000")
 WEB_PORT=${WEB_PORT:-3000}
-API_PORT=${API_PORT:-8080}
 
-echo "  Dashboard:  http://localhost:${WEB_PORT}"
-echo "  API:        http://localhost:${API_PORT}"
-echo "  Logs:       docker compose logs -f"
+echo ""
+echo "  All services started!"
+echo ""
+echo "  Open http://localhost:${WEB_PORT} in your browser."
+echo "  If this is your first time, a setup wizard will guide you."
+echo ""
+echo "  Logs:  docker compose logs -f"
+echo "  Stop:  docker compose down"
 echo ""

@@ -1,12 +1,34 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { getSetting } from "./settings.js";
 
 if (!process.env.ANTHROPIC_API_KEY) {
-  console.warn("[claude] ANTHROPIC_API_KEY not set — AI analysis disabled");
+  console.warn("[claude] ANTHROPIC_API_KEY not in env — will check DB settings");
 }
 
-const client = process.env.ANTHROPIC_API_KEY
+// Lazy-initialized client: checks env first, then DB settings
+let _client: Anthropic | null = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
+let _clientChecked = !!process.env.ANTHROPIC_API_KEY;
+
+async function getClient(): Promise<Anthropic | null> {
+  if (_client) return _client;
+  if (_clientChecked) return null;
+
+  const apiKey = await getSetting("ANTHROPIC_API_KEY");
+  if (apiKey) {
+    _client = new Anthropic({ apiKey });
+    console.log("[claude] Initialized from DB settings");
+  }
+  _clientChecked = true;
+  return _client;
+}
+
+// Re-export so setup route can reset after saving a new key
+export function resetClient() {
+  _client = null;
+  _clientChecked = false;
+}
 
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 const SONNET_MODEL = "claude-sonnet-4-20250514";
@@ -61,6 +83,7 @@ export async function analyzeWithAI(
   }>,
   localAnalysis: LocalAnalysis
 ): Promise<AIAnalysisResult | null> {
+  const client = await getClient();
   if (!client) {
     return null;
   }
@@ -180,6 +203,7 @@ export async function generateDynamicRemediation(
   snapshot: Record<string, unknown>,
   hostname: string
 ): Promise<string | null> {
+  const client = await getClient();
   if (!client) return null;
 
   const steps = kbEntry.solutionSteps as Array<{
@@ -252,6 +276,7 @@ export async function diagnoseUpdateFailure(
   hostname: string,
   os: string
 ): Promise<string | null> {
+  const client = await getClient();
   if (!client) return null;
 
   const prompt = `You are a Linux sysadmin. An automatic "apt-get update && apt-get upgrade" failed on ${hostname} (${os}).

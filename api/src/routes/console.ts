@@ -11,14 +11,28 @@ import {
   alerts,
 } from "../db/schema.js";
 import { eq, desc, asc, and } from "drizzle-orm";
+import { getSetting } from "../lib/settings.js";
 
 const router = Router();
 
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 
-const client = process.env.ANTHROPIC_API_KEY
+// Lazy client — resolves API key from env or DB settings
+let _consoleClient: Anthropic | null = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
+let _consoleClientChecked = !!process.env.ANTHROPIC_API_KEY;
+
+async function getConsoleClient(): Promise<Anthropic | null> {
+  if (_consoleClient) return _consoleClient;
+  if (_consoleClientChecked) return null;
+  const apiKey = await getSetting("ANTHROPIC_API_KEY");
+  if (apiKey) {
+    _consoleClient = new Anthropic({ apiKey });
+  }
+  _consoleClientChecked = true;
+  return _consoleClient;
+}
 
 // ─── Token estimation ───────────────────────────────────────────────────────
 // Rough estimate: ~4 chars per token for English text
@@ -141,8 +155,9 @@ router.post("/:agentId/ask", async (req, res) => {
     return;
   }
 
+  const client = await getConsoleClient();
   if (!client) {
-    res.json({ response: "AI unavailable — ANTHROPIC_API_KEY not configured", model: null });
+    res.json({ response: "AI unavailable — ANTHROPIC_API_KEY not configured. Go to Setup to add your key.", model: null });
     return;
   }
 
@@ -381,7 +396,7 @@ ${kbEntries.map((k) => `- ${k.issuePattern}: ${k.solution}`).join("\n") || "None
 
   // ── Call AI ──
   const model = HAIKU_MODEL;
-  const response = await client.messages.create({
+  const response = await client!.messages.create({
     model,
     max_tokens: 1500,
     system: systemPrompt,
@@ -539,6 +554,7 @@ ${kbEntries.map((k) => `- ${k.issuePattern}: ${k.solution}`).join("\n") || "None
 // Summarizes older messages so the session stays within budget
 
 async function compressSession(sessionId: string, agentId: string) {
+  const client = await getConsoleClient();
   if (!client) return;
 
   // Load all user/assistant messages in this session

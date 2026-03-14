@@ -43,6 +43,13 @@
       "when": 1773471992921,
       "tag": "0005_young_kronos",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1773530000000,
+      "tag": "0006_add_settings",
+      "breakpoints": true
     }
   ]
 }

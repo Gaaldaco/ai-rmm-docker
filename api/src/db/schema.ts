@@ -182,6 +182,14 @@ export const consoleMessages = pgTable("console_messages", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ─── Settings (key-value config stored in DB) ───────────────────────────────
+
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 // ─── Audit Log ───────────────────────────────────────────────────────────────
 
 export const auditLog = pgTable("audit_log", {

@@ -9,18 +9,17 @@ AI-powered remote monitoring and management platform. Deploy with Docker Compose
 git clone https://github.com/Gaaldaco/ai-rmm-docker.git
 cd ai-rmm-docker
 
-# 2. Run the start script — it handles everything
+# 2. Start the stack
 ./start.sh
+# Or: docker compose up -d --build
+
+# 3. Open the dashboard
+open http://localhost:3000
 ```
 
-That's it. If no configuration exists, a setup wizard opens in your browser where you enter your API key, database password, and server address. Once submitted, it automatically builds and starts the full stack.
+No `.env` file needed. When you open the dashboard for the first time, a setup wizard appears where you enter your Anthropic API key, server address, and optional settings. Everything is stored in the database.
 
-**Manual setup** (if you prefer):
-```bash
-cp .env.example .env
-# Edit .env — set POSTGRES_PASSWORD and ANTHROPIC_API_KEY at minimum
-docker compose up -d --build
-```
+**Advanced**: If you prefer to pre-configure via environment variables, copy `.env.example` to `.env` and fill it in before starting.
 
 ## Services
 
@@ -44,10 +43,10 @@ Set `API_URL` in your `.env` to the public URL where agents can reach the API (e
 
 ## Environment Variables
 
-See [`.env.example`](.env.example) for all available options. Required:
+See [`.env.example`](.env.example) for all available options. All are optional — the setup wizard handles the essentials. If you want to pre-configure:
 
-- `POSTGRES_PASSWORD` — Database password
-- `ANTHROPIC_API_KEY` — Claude API key for AI analysis
+- `ANTHROPIC_API_KEY` — Claude API key (or set via setup wizard)
+- `POSTGRES_PASSWORD` — Database password (defaults to `airemote2024`)
 
 ## Development
 
