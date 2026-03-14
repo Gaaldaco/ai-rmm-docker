@@ -216,7 +216,7 @@ const server = app.listen(PORT, () => {
 setupAgentWebSocket(server);
 
 // ─── WebSocket server for frontend real-time updates ────────────────────────
-const wss = new WebSocketServer({ server, path: "/ws/dashboard" });
+const wss = new WebSocketServer({ server, path: "/ws/dashboard", perMessageDeflate: false });
 
 wss.on("connection", (ws) => {
   console.log("[ws] Dashboard client connected");
