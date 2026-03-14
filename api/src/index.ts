@@ -53,8 +53,10 @@ app.get("/api/agents/download/:arch", (req, res) => {
 });
 
 // ─── Install script endpoint ─────────────────────────────────────────────────
-app.get("/install.sh", (_req, res) => {
-  const apiUrl = process.env.API_URL || `http://localhost:${PORT}`;
+app.get("/install.sh", (req, res) => {
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol || "http";
+  const host = req.headers["x-forwarded-host"] || req.headers.host || `localhost:${PORT}`;
+  const apiUrl = process.env.API_URL || `${protocol}://${host}`;
   const script = `#!/bin/bash
 set -e
 
