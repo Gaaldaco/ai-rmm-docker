@@ -211,16 +211,17 @@ const server = app.listen(PORT, () => {
   console.log(`[api] AI Remote Service API listening on port ${PORT}`);
 });
 
+// ─── WebSocket server for agent connections ─────────────────────────────────
+// Must be registered BEFORE the dashboard /ws server to avoid path conflicts
+setupAgentWebSocket(server);
+
 // ─── WebSocket server for frontend real-time updates ────────────────────────
-const wss = new WebSocketServer({ server, path: "/ws" });
+const wss = new WebSocketServer({ server, path: "/ws/dashboard" });
 
 wss.on("connection", (ws) => {
   console.log("[ws] Dashboard client connected");
   ws.on("close", () => console.log("[ws] Dashboard client disconnected"));
 });
-
-// ─── WebSocket server for agent connections ─────────────────────────────────
-setupAgentWebSocket(server);
 
 // Export for use by workers to broadcast events
 export function broadcast(event: string, data: unknown) {

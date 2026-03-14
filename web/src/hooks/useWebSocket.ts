@@ -11,7 +11,7 @@ export function useWebSocket(onMessage: (msg: WSMessage) => void) {
       ? new URL(import.meta.env.VITE_API_URL).host
       : window.location.host;
 
-    const ws = new WebSocket(`${protocol}//${host}/ws`);
+    const ws = new WebSocket(`${protocol}//${host}/ws/dashboard`);
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
