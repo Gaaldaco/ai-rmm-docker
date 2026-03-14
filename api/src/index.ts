@@ -57,7 +57,10 @@ app.get("/api/agents/download/:arch", (req, res) => {
 app.get("/install.sh", (req, res) => {
   const protocol = req.headers["x-forwarded-proto"] || req.protocol || "http";
   const host = req.headers["x-forwarded-host"] || req.headers.host || `localhost:${PORT}`;
-  const apiUrl = process.env.API_URL || `${protocol}://${host}`;
+  const frontendUrl = process.env.API_URL || `${protocol}://${host}`;
+  // Agents connect directly to the API (port 8080), not through nginx
+  const hostWithoutPort = (host as string).split(":")[0];
+  const apiUrl = process.env.API_URL || `${protocol}://${hostWithoutPort}:${process.env.API_PORT || 8080}`;
   const script = [
     '#!/bin/bash',
     'set -e',
@@ -67,7 +70,7 @@ app.get("/install.sh", (req, res) => {
     '# Re-run as root if not already',
     'if [ "$EUID" -ne 0 ]; then',
     '  echo "Root required. Re-running with sudo..."',
-    `  exec sudo bash -c "$(curl -sSL '${apiUrl}/install.sh')"`,
+    `  exec sudo bash -c "$(curl -sSL '${frontendUrl}/install.sh')"`,
     'fi',
     '',
     `API_URL="\${API_URL:-${apiUrl}}"`,
