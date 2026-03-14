@@ -184,7 +184,7 @@ export default function Dashboard() {
       {isLoading ? (
         <div className="text-gray-500 text-center py-20 text-sm">Loading devices...</div>
       ) : filtered.length > 0 ? (
-        <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+        <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-visible">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800 text-gray-500 text-xs uppercase tracking-wider">
@@ -382,7 +382,7 @@ function DeleteModal({
 }) {
   const [uninstallStatus, setUninstallStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle');
   const [uninstallOutput, setUninstallOutput] = useState<string | null>(null);
-  const uninstallCmd = `nohup bash -c 'sleep 3 && systemctl stop ai-remote-agent && systemctl disable ai-remote-agent && rm -f /usr/local/bin/ai-remote-agent /etc/systemd/system/ai-remote-agent.service && rm -rf /etc/ai-remote-agent && systemctl daemon-reload' >/dev/null 2>&1 & echo "Uninstall scheduled — agent will be removed in a few seconds"`;
+  const uninstallCmd = `nohup bash -c 'sleep 3 && systemctl stop ai-remote-agent && systemctl disable ai-remote-agent && rm -f /usr/local/bin/ai-remote-agent /etc/systemd/system/ai-remote-agent.service && rm -rf /etc/ai-remote-agent /var/log/ai-remote-agent && rm -f /etc/sudoers.d/airagent && userdel airagent 2>/dev/null; systemctl daemon-reload' >/dev/null 2>&1 & echo "Uninstall scheduled — agent will be fully removed in a few seconds"`;
 
   const handleUninstall = async () => {
     setUninstallStatus('running');

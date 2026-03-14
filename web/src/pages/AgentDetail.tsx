@@ -118,7 +118,7 @@ export default function AgentDetail() {
     { key: 'remediation', label: 'Remediation' },
   ];
 
-  const uninstallCmd = `nohup bash -c 'sleep 3 && systemctl stop ai-remote-agent && systemctl disable ai-remote-agent && rm -f /usr/local/bin/ai-remote-agent /etc/systemd/system/ai-remote-agent.service && rm -rf /etc/ai-remote-agent && systemctl daemon-reload' >/dev/null 2>&1 & echo "Uninstall scheduled — agent will be removed in a few seconds"`;
+  const uninstallCmd = `nohup bash -c 'sleep 3 && systemctl stop ai-remote-agent && systemctl disable ai-remote-agent && rm -f /usr/local/bin/ai-remote-agent /etc/systemd/system/ai-remote-agent.service && rm -rf /etc/ai-remote-agent /var/log/ai-remote-agent && rm -f /etc/sudoers.d/airagent && userdel airagent 2>/dev/null; systemctl daemon-reload' >/dev/null 2>&1 & echo "Uninstall scheduled — agent will be fully removed in a few seconds"`;
 
   return (
     <div className="p-6">
