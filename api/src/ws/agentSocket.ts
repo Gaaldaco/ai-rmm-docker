@@ -31,7 +31,16 @@ export function getConnectedAgentIds(): string[] {
 
 // ─── Setup ─────────────────────────────────────────────────────────────────
 export function setupAgentWebSocket(server: Server) {
-  const wss = new WebSocketServer({ server, path: "/ws/agent", perMessageDeflate: false });
+  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+
+  server.on("upgrade", (req, socket, head) => {
+    if (req.url === "/ws/agent") {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req);
+      });
+    }
+    // Other paths handled by other WebSocketServer instances
+  });
 
   wss.on("connection", async (ws, req) => {
     // ── Authenticate via Authorization header ──

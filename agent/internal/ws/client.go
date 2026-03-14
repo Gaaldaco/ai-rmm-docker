@@ -125,7 +125,7 @@ func (c *Client) ConnectWithRetry() {
 func (c *Client) dial() error {
 	dialer := websocket.Dialer{
 		HandshakeTimeout:  10 * time.Second,
-		EnableCompression: true,
+		EnableCompression: false,
 	}
 
 	if c.tlsSkipVerify {
