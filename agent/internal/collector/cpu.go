@@ -1,3 +1,5 @@
+//go:build linux
+
 package collector
 
 import (
@@ -7,12 +9,6 @@ import (
 	"strings"
 	"time"
 )
-
-type CPUInfo struct {
-	UsagePercent float64   `json:"usagePercent"`
-	Cores        int       `json:"cores"`
-	LoadAvg      []float64 `json:"loadAvg,omitempty"`
-}
 
 func CollectCPU() CPUInfo {
 	cores := runtime.NumCPU()

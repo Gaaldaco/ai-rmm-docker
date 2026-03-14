@@ -32,7 +32,7 @@ type Snapshot struct {
 }
 
 func main() {
-	configPath := flag.String("config", config.DefaultConfigPath, "Path to config file")
+	configPath := flag.String("config", config.DefaultConfigPath(), "Path to config file")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)

@@ -1,3 +1,5 @@
+//go:build linux
+
 package collector
 
 import (
@@ -5,12 +7,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-type NetworkInfo struct {
-	Interface string `json:"interface"`
-	BytesSent uint64 `json:"bytesSent"`
-	BytesRecv uint64 `json:"bytesRecv"`
-}
 
 func CollectNetwork() []NetworkInfo {
 	data, err := os.ReadFile("/proc/net/dev")

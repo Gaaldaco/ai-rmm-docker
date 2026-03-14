@@ -1,4 +1,4 @@
-//go:build linux
+//go:build windows
 
 package executor
 
@@ -19,7 +19,8 @@ func Execute(command string, timeout time.Duration) Result {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sudo", "bash", "-c", command)
+	// On Windows, run commands via PowerShell (service runs as SYSTEM — no sudo needed)
+	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command)
 
 	output, err := cmd.CombinedOutput()
 

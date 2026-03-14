@@ -39,8 +39,9 @@ app.get("/health", (_req, res) => {
 const AGENT_BIN_DIR = path.resolve("agent-bin");
 
 app.get("/api/agents/download/:arch", (req, res) => {
-  const arch = req.params.arch; // e.g. "linux-amd64", "linux-arm64"
-  const filename = `ai-remote-agent-${arch}`;
+  const arch = req.params.arch; // e.g. "linux-amd64", "linux-arm64", "windows-amd64"
+  const isWindows = arch.startsWith("windows-");
+  const filename = `ai-remote-agent-${arch}${isWindows ? ".exe" : ""}`;
   const filepath = path.join(AGENT_BIN_DIR, filename);
 
   if (!fs.existsSync(filepath)) {
@@ -192,6 +193,130 @@ app.get("/install.sh", (req, res) => {
     'echo "Status:  systemctl status ai-remote-agent"',
     'echo ""',
   ].join('\n');
+  res.setHeader("Content-Type", "text/plain");
+  res.send(script);
+});
+
+// ─── Windows install script endpoint ─────────────────────────────────────────
+app.get("/install.ps1", (req, res) => {
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol || "http";
+  const host = req.headers["x-forwarded-host"] || req.headers.host || `localhost:${PORT}`;
+  const hostWithoutPort = (host as string).split(":")[0];
+  const apiUrl = process.env.API_URL || `${protocol}://${hostWithoutPort}:${process.env.API_PORT || 8080}`;
+  const script = [
+    '# AI Remote Agent Installer for Windows',
+    '# Run as Administrator: irm http://SERVER:3000/install.ps1 | iex',
+    '',
+    '# Check for Administrator privileges',
+    'if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {',
+    '    Write-Host "Error: Please run as Administrator" -ForegroundColor Red',
+    '    Write-Host "Right-click PowerShell and select Run as Administrator"',
+    '    exit 1',
+    '}',
+    '',
+    `$ApiUrl = if ($env:API_URL) { $env:API_URL } else { "${apiUrl}" }`,
+    '',
+    'Write-Host "=== AI Remote Agent Installer (Windows) ===" -ForegroundColor Cyan',
+    'Write-Host "API:  $ApiUrl"',
+    'Write-Host "Arch: windows-amd64"',
+    'Write-Host ""',
+    '',
+    '# Download binary',
+    'Write-Host "Downloading agent binary..."',
+    '$binDir = "C:\\ProgramData\\ai-remote-agent"',
+    'New-Item -ItemType Directory -Force -Path $binDir | Out-Null',
+    '$binPath = "$binDir\\ai-remote-agent.exe"',
+    'try {',
+    '    Invoke-WebRequest -Uri "$ApiUrl/api/agents/download/windows-amd64" -OutFile $binPath -UseBasicParsing',
+    '} catch {',
+    '    Write-Host "Error: Failed to download binary - $_" -ForegroundColor Red',
+    '    exit 1',
+    '}',
+    'Write-Host "Download complete."',
+    '',
+    '# Register with API',
+    '$AgentName = $env:COMPUTERNAME',
+    '$OsInfo = (Get-CimInstance Win32_OperatingSystem).Caption',
+    '$Arch = $env:PROCESSOR_ARCHITECTURE',
+    '',
+    '$body = @{',
+    '    name = $AgentName',
+    '    hostname = $AgentName',
+    '    os = $OsInfo',
+    '    arch = $Arch',
+    '    platform = "windows"',
+    '} | ConvertTo-Json',
+    '',
+    'Write-Host ""',
+    'Write-Host "Registering agent..."',
+    'try {',
+    '    $response = Invoke-RestMethod -Uri "$ApiUrl/api/agents/register" -Method Post -Body $body -ContentType "application/json"',
+    '} catch {',
+    '    Write-Host "Error: Registration failed - $_" -ForegroundColor Red',
+    '    exit 1',
+    '}',
+    '',
+    '$ApiKey = $response.apiKey',
+    '$AgentId = $response.id',
+    '',
+    'if (-not $ApiKey) {',
+    '    Write-Host "Error: Registration failed. No API key returned." -ForegroundColor Red',
+    '    exit 1',
+    '}',
+    '',
+    'Write-Host "Registered! Agent ID: $AgentId" -ForegroundColor Green',
+    'Write-Host ""',
+    'Write-Host "  API Key: $ApiKey"',
+    'Write-Host "  SAVE THIS KEY - it will NOT be shown again." -ForegroundColor Yellow',
+    'Write-Host ""',
+    '',
+    '# Write config',
+    '$configContent = @"',
+    'api_url: "$ApiUrl"',
+    'api_key: "$ApiKey"',
+    'agent_name: "$AgentName"',
+    'snapshot_interval: 60',
+    'heartbeat_interval: 30',
+    'tls_skip_verify: false',
+    '"@',
+    '$configContent | Set-Content "$binDir\\config.yaml" -Encoding UTF8',
+    '',
+    '# Install as Windows Service using sc.exe',
+    'Write-Host "Installing Windows service..."',
+    '$serviceName = "AIRemoteAgent"',
+    '',
+    '# Stop and remove existing service if present',
+    'if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {',
+    '    Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue',
+    '    sc.exe delete $serviceName | Out-Null',
+    '    Start-Sleep -Seconds 2',
+    '}',
+    '',
+    '# Create the service using nssm-style wrapper or native sc',
+    '# Since Go binaries need a service wrapper, we use a scheduled task as an alternative',
+    '# that auto-starts and restarts on failure',
+    '$action = New-ScheduledTaskAction -Execute $binPath',
+    '$trigger = New-ScheduledTaskTrigger -AtStartup',
+    '$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest',
+    '$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 9999 -RestartInterval (New-TimeSpan -Minutes 1)',
+    '',
+    '# Remove existing task if present',
+    'Unregister-ScheduledTask -TaskName $serviceName -Confirm:$false -ErrorAction SilentlyContinue',
+    '',
+    'Register-ScheduledTask -TaskName $serviceName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "AI Remote Service Agent" | Out-Null',
+    '',
+    '# Start immediately',
+    'Start-ScheduledTask -TaskName $serviceName',
+    '',
+    'Write-Host ""',
+    'Write-Host "=== Installation Complete ===" -ForegroundColor Green',
+    'Write-Host "Binary:  $binPath"',
+    'Write-Host "Config:  $binDir\\config.yaml"',
+    'Write-Host "Task:    $serviceName (Scheduled Task)"',
+    'Write-Host "Status:  Get-ScheduledTask -TaskName $serviceName"',
+    'Write-Host "Logs:    Get-ScheduledTaskInfo -TaskName $serviceName"',
+    'Write-Host ""',
+  ].join('\r\n');
   res.setHeader("Content-Type", "text/plain");
   res.send(script);
 });

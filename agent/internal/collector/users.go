@@ -1,15 +1,11 @@
+//go:build linux
+
 package collector
 
 import (
 	"os/exec"
 	"strings"
 )
-
-type UserInfo struct {
-	Username  string `json:"username"`
-	Terminal  string `json:"terminal,omitempty"`
-	LoginTime string `json:"loginTime,omitempty"`
-}
 
 func CollectUsers() []UserInfo {
 	out, err := exec.Command("who").Output()

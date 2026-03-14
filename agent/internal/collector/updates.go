@@ -1,15 +1,11 @@
+//go:build linux
+
 package collector
 
 import (
 	"os/exec"
 	"strings"
 )
-
-type UpdateInfo struct {
-	Package        string `json:"package"`
-	CurrentVersion string `json:"currentVersion,omitempty"`
-	NewVersion     string `json:"newVersion,omitempty"`
-}
 
 func CollectPendingUpdates() []UpdateInfo {
 	// Try apt (Debian/Ubuntu)

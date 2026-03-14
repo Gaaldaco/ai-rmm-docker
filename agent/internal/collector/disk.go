@@ -1,3 +1,5 @@
+//go:build linux
+
 package collector
 
 import (
@@ -5,13 +7,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-type DiskInfo struct {
-	Mountpoint   string  `json:"mountpoint"`
-	TotalGB      float64 `json:"totalGB"`
-	UsedGB       float64 `json:"usedGB"`
-	UsagePercent float64 `json:"usagePercent"`
-}
 
 func CollectDisk() []DiskInfo {
 	out, err := exec.Command("df", "-BG", "--output=target,size,used,pcent", "-x", "tmpfs", "-x", "devtmpfs", "-x", "squashfs").Output()

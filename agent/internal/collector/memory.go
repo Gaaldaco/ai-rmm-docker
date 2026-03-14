@@ -1,3 +1,5 @@
+//go:build linux
+
 package collector
 
 import (
@@ -5,12 +7,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-type MemoryInfo struct {
-	TotalMB      float64 `json:"totalMB"`
-	UsedMB       float64 `json:"usedMB"`
-	UsagePercent float64 `json:"usagePercent"`
-}
 
 func CollectMemory() MemoryInfo {
 	data, err := os.ReadFile("/proc/meminfo")

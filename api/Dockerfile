@@ -7,6 +7,7 @@ COPY agent/ .
 RUN go mod tidy
 RUN GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o bin/ai-remote-agent-linux-amd64 ./cmd/agent
 RUN GOOS=linux GOARCH=arm64 go build -ldflags "-s -w" -o bin/ai-remote-agent-linux-arm64 ./cmd/agent
+RUN GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o bin/ai-remote-agent-windows-amd64.exe ./cmd/agent
 
 ## ─── Stage 2: Build API (Node) ──────────────────────────────────────────────
 FROM node:20-alpine AS builder

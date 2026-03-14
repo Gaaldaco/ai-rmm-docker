@@ -1,3 +1,5 @@
+//go:build linux
+
 package collector
 
 import (
@@ -5,13 +7,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-type OpenPort struct {
-	Port     int    `json:"port"`
-	Protocol string `json:"protocol"`
-	Process  string `json:"process,omitempty"`
-	Address  string `json:"address"`
-}
 
 func CollectOpenPorts() []OpenPort {
 	out, err := exec.Command("ss", "-tlnp").Output()

@@ -1,3 +1,5 @@
+//go:build linux
+
 package collector
 
 import (
@@ -6,14 +8,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-type ProcessInfo struct {
-	PID  int     `json:"pid"`
-	Name string  `json:"name"`
-	CPU  float64 `json:"cpu"`
-	Mem  float64 `json:"mem"`
-	User string  `json:"user"`
-}
 
 func CollectProcesses() []ProcessInfo {
 	out, err := exec.Command("ps", "aux", "--sort=-pcpu").Output()
@@ -44,11 +38,11 @@ func CollectProcesses() []ProcessInfo {
 		}
 
 		procs = append(procs, ProcessInfo{
-			PID:  pid,
-			Name: name,
-			CPU:  cpu,
-			Mem:  mem,
-			User: fields[0],
+			PID:    pid,
+			Name:   name,
+			CPU:    cpu,
+			Memory: mem,
+			User:   fields[0],
 		})
 	}
 

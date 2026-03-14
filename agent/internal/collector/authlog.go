@@ -1,17 +1,11 @@
+//go:build linux
+
 package collector
 
 import (
 	"os/exec"
 	"strings"
 )
-
-type AuthLogEntry struct {
-	Timestamp string `json:"timestamp"`
-	Type      string `json:"type"`
-	User      string `json:"user,omitempty"`
-	Source    string `json:"source,omitempty"`
-	Success   bool   `json:"success"`
-}
 
 func CollectAuthLogs() []AuthLogEntry {
 	// Try journalctl first (works on most systemd systems)

@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"runtime"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,7 +16,12 @@ type Config struct {
 	TLSSkipVerify     bool   `yaml:"tls_skip_verify"`     // skip TLS cert verification (dev only)
 }
 
-const DefaultConfigPath = "/etc/ai-remote-agent/config.yaml"
+func DefaultConfigPath() string {
+	if runtime.GOOS == "windows" {
+		return `C:\ProgramData\ai-remote-agent\config.yaml`
+	}
+	return "/etc/ai-remote-agent/config.yaml"
+}
 
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)

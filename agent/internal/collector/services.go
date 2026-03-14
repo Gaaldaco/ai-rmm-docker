@@ -1,3 +1,5 @@
+//go:build linux
+
 package collector
 
 import (
@@ -5,14 +7,6 @@ import (
 	"os/exec"
 	"strings"
 )
-
-type ServiceInfo struct {
-	Name    string  `json:"name"`
-	Status  string  `json:"status"` // running | stopped | failed | inactive
-	Enabled bool    `json:"enabled"`
-	CPU     float64 `json:"cpu,omitempty"`
-	Mem     float64 `json:"mem,omitempty"`
-}
 
 type systemctlUnit struct {
 	Unit   string `json:"unit"`

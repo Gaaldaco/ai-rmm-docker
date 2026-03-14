@@ -1,3 +1,5 @@
+//go:build linux
+
 package collector
 
 import (
@@ -5,13 +7,6 @@ import (
 	"runtime"
 	"strings"
 )
-
-type SystemInfo struct {
-	Hostname string `json:"hostname"`
-	OS       string `json:"os"`
-	Arch     string `json:"arch"`
-	Platform string `json:"platform"`
-}
 
 func CollectSystemInfo() SystemInfo {
 	hostname, _ := os.Hostname()
