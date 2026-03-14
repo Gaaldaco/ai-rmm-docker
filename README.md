@@ -6,18 +6,20 @@ AI-powered remote monitoring and management platform. Deploy with Docker Compose
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/YOUR_USERNAME/ai-rmm-docker.git
+git clone https://github.com/Gaaldaco/ai-rmm-docker.git
 cd ai-rmm-docker
 
-# 2. Create .env from the example
+# 2. Run the start script — it handles everything
+./start.sh
+```
+
+That's it. If no configuration exists, a setup wizard opens in your browser where you enter your API key, database password, and server address. Once submitted, it automatically builds and starts the full stack.
+
+**Manual setup** (if you prefer):
+```bash
 cp .env.example .env
 # Edit .env — set POSTGRES_PASSWORD and ANTHROPIC_API_KEY at minimum
-
-# 3. Build and start
 docker compose up -d --build
-
-# 4. Access the dashboard
-open http://localhost:3000
 ```
 
 ## Services
