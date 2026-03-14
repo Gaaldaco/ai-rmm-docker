@@ -1,0 +1,660 @@
+import "dotenv/config";
+import { Worker } from "bullmq";
+import { db } from "../db/index.js";
+import {
+  machineSnapshots,
+  agents,
+  monitoredServices,
+  knowledgeBase,
+  alerts,
+  remediationLog,
+} from "../db/schema.js";
+import { eq, desc, and, or } from "drizzle-orm";
+import { analyzeWithAI, generateDynamicRemediation, diagnoseUpdateFailure } from "../lib/claude.js";
+
+const redisUrl =
+  process.env.REDIS_URL || "redis://localhost:6379";
+
+const connection = { url: redisUrl };
+
+// ─── Thresholds (rule-based, no AI needed) ──────────────────────────────────
+
+const THRESHOLDS = {
+  cpu: { warning: 80, critical: 95 },
+  memory: { warning: 85, critical: 95 },
+  disk: { warning: 85, critical: 95 },
+  authFailures: { warning: 5, critical: 20 }, // per snapshot window
+};
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface Issue {
+  category: string;
+  severity: "info" | "warning" | "critical";
+  description: string;
+  suggestedCommand: string | null;
+  matchesKnownPattern: string | null;
+}
+
+interface AnalysisResult {
+  healthScore: number;
+  summary: string;
+  issues: Issue[];
+  usedAI: boolean;
+}
+
+// ─── Rule-based analysis (free, instant) ────────────────────────────────────
+
+function analyzeLocally(
+  snapshot: Record<string, any>,
+  hostname: string,
+  monitored: Array<{ serviceName: string }>,
+  kbEntries: Array<{ id: string; issuePattern: string; solution: string; successCount: number; failureCount: number }>
+): AnalysisResult {
+  const issues: Issue[] = [];
+  let healthScore = 100;
+
+  // ── CPU ──
+  const cpuUsage = snapshot.cpu?.usagePercent ?? 0;
+  const processes = (snapshot.processes as any[]) ?? [];
+
+  // Filter out system-critical processes that should never be killed
+  const SYSTEM_PROCS = new Set(["init", "systemd", "kthreadd", "sshd", "journald", "udevd", "dbus-daemon", "ai-remote-agent"]);
+  const killableProcs = processes.filter((p: any) =>
+    p.pid > 1 && !SYSTEM_PROCS.has(p.name?.replace(/.*\//, ""))
+  );
+
+  const topCpuProc = killableProcs.length > 0
+    ? killableProcs.reduce((top, p) => (p.cpu > (top?.cpu ?? 0) ? p : top), killableProcs[0])
+    : null;
+
+  if (cpuUsage >= THRESHOLDS.cpu.critical) {
+    // Don't suggest a blind kill — flag for live troubleshooting
+    const desc = topCpuProc && topCpuProc.cpu > 10
+      ? `CPU critically high at ${cpuUsage.toFixed(1)}% — top process: ${topCpuProc.name} (${topCpuProc.cpu}% CPU, PID ${topCpuProc.pid})`
+      : `CPU critically high at ${cpuUsage.toFixed(1)}%`;
+    issues.push({
+      category: "performance",
+      severity: "critical",
+      description: desc,
+      suggestedCommand: null, // no blind fix — needs live troubleshooting
+      matchesKnownPattern: findKbMatch("high cpu", kbEntries),
+    });
+    healthScore -= 30;
+  } else if (cpuUsage >= THRESHOLDS.cpu.warning) {
+    issues.push({
+      category: "performance",
+      severity: "warning",
+      description: `CPU elevated at ${cpuUsage.toFixed(1)}%${topCpuProc && topCpuProc.cpu > 10 ? ` — top: ${topCpuProc.name} (${topCpuProc.cpu}%)` : ""}`,
+      suggestedCommand: null,
+      matchesKnownPattern: findKbMatch("high cpu", kbEntries),
+    });
+    healthScore -= 10;
+  }
+
+  // ── Memory ──
+  const memUsage = snapshot.memory?.usagePercent ?? 0;
+  const topMemProc = killableProcs.length > 0
+    ? killableProcs.reduce((top, p) => (p.mem > (top?.mem ?? 0) ? p : top), killableProcs[0])
+    : null;
+
+  if (memUsage >= THRESHOLDS.memory.critical) {
+    const desc = topMemProc && topMemProc.mem > 10
+      ? `Memory critically high at ${memUsage.toFixed(1)}% — top process: ${topMemProc.name} (${topMemProc.mem}% MEM, PID ${topMemProc.pid})`
+      : `Memory critically high at ${memUsage.toFixed(1)}%`;
+    issues.push({
+      category: "performance",
+      severity: "critical",
+      description: desc,
+      suggestedCommand: null, // needs live troubleshooting
+      matchesKnownPattern: findKbMatch("high memory", kbEntries),
+    });
+    healthScore -= 30;
+  } else if (memUsage >= THRESHOLDS.memory.warning) {
+    issues.push({
+      category: "performance",
+      severity: "warning",
+      description: `Memory elevated at ${memUsage.toFixed(1)}%${topMemProc && topMemProc.mem > 10 ? ` — top: ${topMemProc.name} (${topMemProc.mem}%)` : ""}`,
+      suggestedCommand: null,
+      matchesKnownPattern: findKbMatch("high memory", kbEntries),
+    });
+    healthScore -= 10;
+  }
+
+  // ── Disk ──
+  const disks = (snapshot.disk as any[]) ?? [];
+  for (const d of disks) {
+    const usage = d.usagePercent ?? 0;
+    if (usage >= THRESHOLDS.disk.critical) {
+      issues.push({
+        category: "performance",
+        severity: "critical",
+        description: `Disk ${d.mountpoint} critically full at ${usage.toFixed(0)}%`,
+        suggestedCommand: `journalctl --vacuum-size=100M && find /var/log -name '*.gz' -delete && find /tmp -atime +7 -delete  # clean logs and temp files on ${d.mountpoint}`,
+        matchesKnownPattern: findKbMatch("high disk", kbEntries),
+      });
+      healthScore -= 25;
+    } else if (usage >= THRESHOLDS.disk.warning) {
+      issues.push({
+        category: "performance",
+        severity: "warning",
+        description: `Disk ${d.mountpoint} usage elevated at ${usage.toFixed(0)}%`,
+        suggestedCommand: null,
+        matchesKnownPattern: findKbMatch("high disk", kbEntries),
+      });
+      healthScore -= 5;
+    }
+  }
+
+  // ── Auth failures (exclude private/local IPs — those are legitimate admin access) ──
+  const authLogs = (snapshot.authLogs as any[]) ?? [];
+  const failures = authLogs.filter(
+    (l: any) => l.success === false && !isPrivateIP(l.source)
+  );
+  // Find the most common attacking IP
+  const attackIPs: Record<string, number> = {};
+  for (const f of failures) {
+    if (f.source) attackIPs[f.source] = (attackIPs[f.source] || 0) + 1;
+  }
+  const topAttackIP = Object.entries(attackIPs).sort((a, b) => b[1] - a[1])[0]?.[0];
+
+  if (failures.length >= THRESHOLDS.authFailures.critical) {
+    issues.push({
+      category: "security",
+      severity: "critical",
+      description: `${failures.length} auth failures from external IPs${topAttackIP ? ` (top: ${topAttackIP})` : ""}`,
+      suggestedCommand: topAttackIP
+        ? `ufw deny from ${topAttackIP} && fail2ban-client set sshd banip ${topAttackIP}  # block top attacker`
+        : "fail2ban-client status sshd",
+      matchesKnownPattern: findKbMatch("auth failure", kbEntries),
+    });
+    healthScore -= 20;
+  } else if (failures.length >= THRESHOLDS.authFailures.warning) {
+    issues.push({
+      category: "security",
+      severity: "warning",
+      description: `${failures.length} auth failures from external IPs${topAttackIP ? ` (top: ${topAttackIP})` : ""}`,
+      suggestedCommand: null,
+      matchesKnownPattern: findKbMatch("auth failure", kbEntries),
+    });
+    healthScore -= 5;
+  }
+
+  // ── Pending security updates ──
+  const updates = (snapshot.pendingUpdates as any[]) ?? [];
+  if (updates.length > 0) {
+    issues.push({
+      category: "update",
+      severity: updates.length > 10 ? "warning" : "info",
+      description: `${updates.length} pending package update(s)`,
+      suggestedCommand: "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' 2>&1 | tail -30",
+      matchesKnownPattern: findKbMatch("pending update", kbEntries),
+    });
+    if (updates.length > 10) healthScore -= 5;
+  }
+
+  // ── Monitored services ──
+  const services = (snapshot.services as any[]) ?? [];
+  const serviceIssues: Issue[] = [];
+  for (const mon of monitored) {
+    const svc = services.find((s: any) => s.name === mon.serviceName);
+    if (!svc || svc.status === "failed" || svc.status === "stopped" || svc.status === "dead") {
+      serviceIssues.push({
+        category: "availability",
+        severity: "critical",
+        description: `Monitored service "${mon.serviceName}" is ${svc?.status ?? "not found"} on ${hostname}`,
+        suggestedCommand: `systemctl restart ${mon.serviceName}`,
+        matchesKnownPattern: findKbMatch(mon.serviceName, kbEntries),
+      });
+      healthScore -= 20;
+    }
+  }
+  issues.push(...serviceIssues);
+
+  healthScore = Math.max(0, healthScore);
+
+  const summaryParts: string[] = [];
+  if (issues.length === 0) {
+    summaryParts.push("All systems nominal.");
+  } else {
+    const crits = issues.filter((i) => i.severity === "critical").length;
+    const warns = issues.filter((i) => i.severity === "warning").length;
+    if (crits > 0) summaryParts.push(`${crits} critical issue(s)`);
+    if (warns > 0) summaryParts.push(`${warns} warning(s)`);
+    summaryParts.push(`Health score: ${healthScore}/100`);
+  }
+
+  return {
+    healthScore,
+    summary: summaryParts.join(". ") + ".",
+    issues,
+    usedAI: false,
+  };
+}
+
+function isPrivateIP(ip: string | undefined | null): boolean {
+  if (!ip) return false;
+  return (
+    ip.startsWith("10.") ||
+    ip.startsWith("192.168.") ||
+    ip.startsWith("172.16.") || ip.startsWith("172.17.") || ip.startsWith("172.18.") ||
+    ip.startsWith("172.19.") || ip.startsWith("172.2") || ip.startsWith("172.30.") ||
+    ip.startsWith("172.31.") ||
+    ip === "127.0.0.1" || ip === "::1" || ip === "localhost"
+  );
+}
+
+function findKbMatch(
+  pattern: string,
+  kbEntries: Array<{ id: string; issuePattern: string; issueCategory?: string }>
+): string | null {
+  const lower = pattern.toLowerCase();
+
+  // Direct substring match (original)
+  const direct = kbEntries.find((k) =>
+    k.issuePattern.toLowerCase().includes(lower) ||
+    lower.includes(k.issuePattern.toLowerCase())
+  );
+  if (direct) return direct.id;
+
+  // Word-overlap match — if 2+ significant words match, consider it a hit
+  const STOP_WORDS = new Set(["the", "a", "an", "is", "at", "on", "in", "to", "of", "and", "or", "for"]);
+  const patternWords = lower.split(/\W+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+
+  let bestMatch: { id: string; score: number } | null = null;
+  for (const kb of kbEntries) {
+    const kbWords = kb.issuePattern.toLowerCase().split(/\W+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+    const overlap = patternWords.filter((w) => kbWords.some((kw) => kw.includes(w) || w.includes(kw))).length;
+    if (overlap >= 2 && (!bestMatch || overlap > bestMatch.score)) {
+      bestMatch = { id: kb.id, score: overlap };
+    }
+  }
+
+  return bestMatch?.id ?? null;
+}
+
+// ─── Worker ─────────────────────────────────────────────────────────────────
+
+console.log("[worker] Starting snapshot analysis worker...");
+
+const worker = new Worker(
+  "snapshot-analysis",
+  async (job) => {
+    const { snapshotId, agentId } = job.data;
+    console.log(`[worker] Analyzing snapshot ${snapshotId} for agent ${agentId}`);
+
+    // 1. Fetch snapshot
+    const [snapshot] = await db
+      .select()
+      .from(machineSnapshots)
+      .where(eq(machineSnapshots.id, snapshotId))
+      .limit(1);
+
+    if (!snapshot) {
+      console.warn(`[worker] Snapshot ${snapshotId} not found, skipping`);
+      return;
+    }
+
+    // 2. Fetch agent info
+    const [agent] = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .limit(1);
+
+    if (!agent) {
+      console.warn(`[worker] Agent ${agentId} not found, skipping`);
+      return;
+    }
+
+    // 3. Fetch monitored services
+    const monitored = await db
+      .select({ serviceName: monitoredServices.serviceName })
+      .from(monitoredServices)
+      .where(eq(monitoredServices.agentId, agentId));
+
+    // 4. Fetch knowledge base entries: device-specific for this agent + global entries
+    const kbEntries = await db
+      .select()
+      .from(knowledgeBase)
+      .where(
+        and(
+          eq(knowledgeBase.platform, agent.platform),
+          or(
+            eq(knowledgeBase.agentId, agentId),
+            eq(knowledgeBase.scope, "global")
+          )
+        )
+      );
+
+    const kbMapped = kbEntries.map((k) => ({
+      id: k.id,
+      issuePattern: k.issuePattern,
+      solution: k.solution,
+      successCount: k.successCount,
+      failureCount: k.failureCount,
+    }));
+
+    // 5. Rule-based analysis first (free, instant)
+    const snapshotData = {
+      cpu: snapshot.cpu,
+      memory: snapshot.memory,
+      disk: snapshot.disk,
+      network: snapshot.network,
+      processes: snapshot.processes,
+      openPorts: snapshot.openPorts,
+      users: snapshot.users,
+      authLogs: snapshot.authLogs,
+      pendingUpdates: snapshot.pendingUpdates,
+      services: snapshot.services,
+    };
+
+    const analysis = analyzeLocally(snapshotData, agent.hostname, monitored, kbMapped);
+
+    // 6. Only call AI for monitored service failures — CPU/memory/disk criticals
+    //    are fully handled by rule-based analysis and don't need AI tokens
+    const hasServiceDown = analysis.issues.some(
+      (i) => i.category === "availability" && i.severity === "critical"
+    );
+
+    if (hasServiceDown) {
+      console.log(
+        `[worker] Monitored service failure detected — escalating to AI for root-cause analysis`
+      );
+
+      try {
+        const aiResult = await analyzeWithAI(
+          agent.name,
+          agent.hostname,
+          agent.os,
+          snapshotData,
+          monitored,
+          kbMapped,
+          analysis // pass local analysis so AI has context on what was already found
+        );
+
+        if (aiResult) {
+          // Merge: AI overrides health score and summary, combine issues
+          analysis.healthScore = aiResult.healthScore;
+          analysis.summary = aiResult.summary;
+          analysis.usedAI = true;
+
+          // Add any AI-found issues that aren't duplicates of local ones
+          for (const aiIssue of aiResult.issues) {
+            const isDuplicate = analysis.issues.some(
+              (local) =>
+                local.category === aiIssue.category &&
+                local.description === aiIssue.description
+            );
+            if (!isDuplicate) {
+              analysis.issues.push(aiIssue);
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`[worker] AI analysis failed, using local results:`, err);
+      }
+    } else {
+      console.log(
+        `[worker] No service failures — skipping AI, using local analysis (score=${analysis.healthScore})`
+      );
+    }
+
+    // 7. Update snapshot with results
+    await db
+      .update(machineSnapshots)
+      .set({
+        healthScore: analysis.healthScore,
+        aiAnalysis: analysis,
+      })
+      .where(eq(machineSnapshots.id, snapshotId));
+
+    // 8. Create alerts for issues (with dedup)
+    // Only alert on warning and critical — info is noise
+    const alertableIssues = analysis.issues.filter((i) => i.severity !== "info");
+
+    for (const issue of alertableIssues) {
+      const alertType = mapIssueToAlertType(issue);
+
+      // Dedup by type + agent (not exact message, since messages contain changing values)
+      const [existingAlert] = await db
+        .select()
+        .from(alerts)
+        .where(
+          and(
+            eq(alerts.agentId, agent.id),
+            eq(alerts.type, alertType),
+            eq(alerts.severity, issue.severity),
+            eq(alerts.resolved, false)
+          )
+        )
+        .limit(1);
+
+      // Find matching KB entry for auto-remediation
+      const matchedKb = issue.matchesKnownPattern
+        ? kbEntries.find((k) => k.id === issue.matchesKnownPattern)
+        : null;
+
+      // Determine remediation command:
+      // 1. Use issue's suggestedCommand if it exists (rule-based, like systemctl restart)
+      // 2. If KB has solutionSteps, dynamically generate the right command from current state
+      // 3. Fall back to static KB solution (only if it doesn't look like a hardcoded PID)
+      let remediationCommand = issue.suggestedCommand || null;
+
+      if (!remediationCommand && matchedKb) {
+        if (matchedKb.solutionSteps && Array.isArray(matchedKb.solutionSteps) && (matchedKb.solutionSteps as any[]).length > 0) {
+          // Dynamic: use AI to generate the right command from playbook + current snapshot
+          try {
+            remediationCommand = await generateDynamicRemediation(
+              { issuePattern: matchedKb.issuePattern, solution: matchedKb.solution, solutionSteps: matchedKb.solutionSteps },
+              snapshotData,
+              agent.hostname
+            );
+          } catch (err) {
+            console.error(`[worker] Dynamic remediation failed:`, err);
+          }
+        } else if (matchedKb.solution && !/\bkill\b.*\b\d{3,}\b/.test(matchedKb.solution)) {
+          // Static command — but reject if it has hardcoded PIDs
+          remediationCommand = matchedKb.solution;
+        } else if (matchedKb.solution) {
+          console.warn(`[worker] Skipping KB solution with hardcoded PID: ${matchedKb.solution}`);
+        }
+      }
+
+      const shouldAutoRemediate =
+        matchedKb?.autoApply && agent.autoRemediate && remediationCommand;
+
+      if (existingAlert) {
+        // Update timestamp and latest message instead of creating a duplicate
+        await db
+          .update(alerts)
+          .set({
+            message: issue.description,
+            snapshotId,
+            details: {
+              suggestedCommand: remediationCommand,
+              matchedKbId: issue.matchesKnownPattern,
+              analyzedByAI: analysis.usedAI,
+              updatedAt: new Date().toISOString(),
+            },
+          })
+          .where(eq(alerts.id, existingAlert.id));
+
+        // Auto-remediate even for existing alerts if we have a KB match
+        if (shouldAutoRemediate && remediationCommand) {
+          // Check if there's already a pending remediation for this alert
+          const [pendingRemediation] = await db
+            .select()
+            .from(remediationLog)
+            .where(
+              and(
+                eq(remediationLog.alertId, existingAlert.id),
+                eq(remediationLog.command, remediationCommand)
+              )
+            )
+            .limit(1);
+
+          if (!pendingRemediation) {
+            console.log(
+              `[worker] Auto-remediating existing alert: ${remediationCommand} on ${agent.hostname}`
+            );
+            await db.insert(remediationLog).values({
+              agentId: agent.id,
+              alertId: existingAlert.id,
+              kbEntryId: matchedKb!.id,
+              command: remediationCommand,
+            });
+          }
+        }
+        continue;
+      }
+
+      const [alert] = await db
+        .insert(alerts)
+        .values({
+          agentId: agent.id,
+          snapshotId,
+          type: alertType,
+          severity: issue.severity,
+          message: issue.description,
+          details: {
+            suggestedCommand: remediationCommand,
+            matchedKbId: issue.matchesKnownPattern,
+            autoRemediate: shouldAutoRemediate,
+            analyzedByAI: analysis.usedAI,
+          },
+        })
+        .returning();
+
+      if (shouldAutoRemediate && remediationCommand) {
+        console.log(
+          `[worker] Auto-remediating: ${remediationCommand} on ${agent.hostname}`
+        );
+
+        await db.insert(remediationLog).values({
+          agentId: agent.id,
+          alertId: alert.id,
+          kbEntryId: matchedKb!.id,
+          command: remediationCommand,
+        });
+      }
+    }
+
+    // 9. Auto-update: if agent has autoUpdate enabled and there are pending updates
+    const pendingUpdates = (snapshotData.pendingUpdates as any[]) ?? [];
+    if (agent.autoUpdate && pendingUpdates.length > 0) {
+      const UPDATE_CMD = "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' 2>&1 | tail -30";
+
+      // Check recent update attempts (last 6 hours)
+      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
+      const recentUpdates = await db
+        .select()
+        .from(remediationLog)
+        .where(eq(remediationLog.agentId, agent.id))
+        .orderBy(desc(remediationLog.executedAt))
+        .limit(10);
+
+      const recentUpdateAttempts = recentUpdates.filter(
+        (r) =>
+          r.command.includes("apt-get upgrade") &&
+          new Date(r.executedAt) > sixHoursAgo
+      );
+
+      // Find the most recent update attempt
+      const lastUpdate = recentUpdateAttempts[0];
+
+      if (!lastUpdate) {
+        // No recent attempt — queue the update
+        console.log(`[worker] Auto-update: queuing ${pendingUpdates.length} package updates on ${agent.hostname}`);
+        await db.insert(remediationLog).values({
+          agentId: agent.id,
+          command: UPDATE_CMD,
+        });
+      } else if (lastUpdate.success === false && lastUpdate.result) {
+        // Last update FAILED — use AI to diagnose and fix, then retry
+        console.log(`[worker] Auto-update failed on ${agent.hostname}, using AI to diagnose...`);
+
+        // Check if we already queued a fix for this failure
+        const alreadyFixing = recentUpdateAttempts.some(
+          (r) => !r.command.includes("apt-get upgrade") && r.success === null
+        );
+
+        if (!alreadyFixing) {
+          try {
+            const fixCmd = await diagnoseUpdateFailure(
+              lastUpdate.result,
+              agent.hostname,
+              agent.os
+            );
+
+            if (fixCmd) {
+              console.log(`[worker] AI fix for update failure: ${fixCmd}`);
+              // Queue the fix command
+              await db.insert(remediationLog).values({
+                agentId: agent.id,
+                command: fixCmd,
+              });
+              // Queue a retry of the update after the fix
+              await db.insert(remediationLog).values({
+                agentId: agent.id,
+                command: UPDATE_CMD,
+              });
+            }
+          } catch (err) {
+            console.error(`[worker] AI update diagnosis failed:`, err);
+          }
+        }
+      } else if (lastUpdate.success === true) {
+        // Last update succeeded — check again in 24h
+        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        if (new Date(lastUpdate.executedAt) < oneDayAgo) {
+          console.log(`[worker] Auto-update: re-queuing updates on ${agent.hostname} (24h since last success)`);
+          await db.insert(remediationLog).values({
+            agentId: agent.id,
+            command: UPDATE_CMD,
+          });
+        }
+      }
+      // If lastUpdate.success === null, it's still pending — don't queue another
+    }
+
+    console.log(
+      `[worker] Analysis complete for ${agent.hostname}: score=${analysis.healthScore}, issues=${analysis.issues.length}, ai=${analysis.usedAI}`
+    );
+  },
+  {
+    connection,
+    concurrency: 3,
+  }
+);
+
+worker.on("failed", (job, err) => {
+  console.error(`[worker] Job ${job?.id} failed:`, err);
+});
+
+worker.on("completed", (job) => {
+  console.log(`[worker] Job ${job.id} completed`);
+});
+
+function mapIssueToAlertType(
+  issue: Issue
+): "service_down" | "high_cpu" | "high_memory" | "high_disk" | "security_issue" | "update_available" | "auth_failure" | "custom" {
+  // Use the description to pick the right alert type within a category
+  switch (issue.category) {
+    case "security":
+      if (issue.description.toLowerCase().includes("auth")) return "auth_failure";
+      return "security_issue";
+    case "performance":
+      if (issue.description.toLowerCase().includes("memory")) return "high_memory";
+      if (issue.description.toLowerCase().includes("disk")) return "high_disk";
+      return "high_cpu";
+    case "availability":
+      return "service_down";
+    case "update":
+      return "update_available";
+    default:
+      return "custom";
+  }
+}
+
+console.log("[worker] Snapshot analysis worker ready");
