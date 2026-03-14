@@ -61,20 +61,24 @@ export function setupAgentWebSocket(server: Server) {
     agentConnections.set(agent.id, ws);
     console.log(`[ws/agent] ${agent.name} (${agent.id}) connected`);
 
-    // Update agent status
-    await db.update(agents)
-      .set({ status: "online", lastSeen: new Date(), updatedAt: new Date() })
-      .where(eq(agents.id, agent.id));
-    await setRedis(`heartbeat:${agent.id}`, { lastSeen: Date.now() }, 90);
+    try {
+      // Update agent status
+      await db.update(agents)
+        .set({ status: "online", lastSeen: new Date(), updatedAt: new Date() })
+        .where(eq(agents.id, agent.id));
+      await setRedis(`heartbeat:${agent.id}`, { lastSeen: Date.now() }, 90);
 
-    // Send any pending commands the agent missed while disconnected
-    const pendingCmds = await db.select()
-      .from(remediationLog)
-      .where(and(eq(remediationLog.agentId, agent.id), isNull(remediationLog.success)))
-      .limit(20);
+      // Send any pending commands the agent missed while disconnected
+      const pendingCmds = await db.select()
+        .from(remediationLog)
+        .where(and(eq(remediationLog.agentId, agent.id), isNull(remediationLog.success)))
+        .limit(20);
 
-    for (const cmd of pendingCmds) {
-      ws.send(JSON.stringify({ type: "command", data: { id: cmd.id, command: cmd.command } }));
+      for (const cmd of pendingCmds) {
+        ws.send(JSON.stringify({ type: "command", data: { id: cmd.id, command: cmd.command } }));
+      }
+    } catch (err) {
+      console.error(`[ws/agent] Post-auth error for ${agent.name}:`, err);
     }
 
     // ── Keepalive ping every 30s ──

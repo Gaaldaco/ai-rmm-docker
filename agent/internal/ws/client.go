@@ -44,6 +44,7 @@ type Client struct {
 	mu             sync.Mutex
 	connected      bool
 	done           chan struct{}
+	connDone       chan struct{} // closed when current connection ends
 	sendCh         chan []byte
 	onCommand      func(Command)
 	reconnectCount int
@@ -102,13 +103,16 @@ func (c *Client) ConnectWithRetry() {
 
 		// Connected successfully
 		c.reconnectCount = 0
+		c.connDone = make(chan struct{})
 		log.Println("[ws] Connected to server")
 
 		go c.writeLoop()
 		go c.pingLoop()
 		c.readLoop() // blocks until disconnect
 
-		// If we get here, connection dropped
+		// Signal writeLoop and pingLoop to stop
+		close(c.connDone)
+
 		c.mu.Lock()
 		c.connected = false
 		c.mu.Unlock()
@@ -156,9 +160,7 @@ func (c *Client) readLoop() {
 	for {
 		_, raw, err := c.conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				log.Printf("[ws] Read error: %v", err)
-			}
+			log.Printf("[ws] Read error: %v", err)
 			return
 		}
 
@@ -196,6 +198,8 @@ func (c *Client) writeLoop() {
 		select {
 		case <-c.done:
 			return
+		case <-c.connDone:
+			return
 		case data := <-c.sendCh:
 			c.mu.Lock()
 			if !c.connected || c.conn == nil {
@@ -219,6 +223,8 @@ func (c *Client) pingLoop() {
 	for {
 		select {
 		case <-c.done:
+			return
+		case <-c.connDone:
 			return
 		case <-ticker.C:
 			c.mu.Lock()
