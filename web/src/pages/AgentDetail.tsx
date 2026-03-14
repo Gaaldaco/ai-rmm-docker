@@ -118,7 +118,10 @@ export default function AgentDetail() {
     { key: 'remediation', label: 'Remediation' },
   ];
 
-  const uninstallCmd = `nohup bash -c 'sleep 3 && systemctl stop ai-remote-agent && systemctl disable ai-remote-agent && rm -f /usr/local/bin/ai-remote-agent /etc/systemd/system/ai-remote-agent.service && rm -rf /etc/ai-remote-agent /var/log/ai-remote-agent && rm -f /etc/sudoers.d/airagent && userdel airagent 2>/dev/null; systemctl daemon-reload' >/dev/null 2>&1 & echo "Uninstall scheduled — agent will be fully removed in a few seconds"`;
+  const isWindows = agent.platform === 'windows';
+  const uninstallCmd = isWindows
+    ? `powershell -NoProfile -Command "Unregister-ScheduledTask -TaskName 'AIRemoteAgent' -Confirm:\\$false -ErrorAction SilentlyContinue; Stop-Process -Name 'ai-remote-agent*' -Force -ErrorAction SilentlyContinue; Remove-Item 'C:\\ProgramData\\ai-remote-agent' -Recurse -Force -ErrorAction SilentlyContinue; Write-Output 'Agent uninstalled successfully'"`
+    : `nohup bash -c 'sleep 3 && systemctl stop ai-remote-agent && systemctl disable ai-remote-agent && rm -f /usr/local/bin/ai-remote-agent /etc/systemd/system/ai-remote-agent.service && rm -rf /etc/ai-remote-agent /var/log/ai-remote-agent && rm -f /etc/sudoers.d/airagent && userdel airagent 2>/dev/null; systemctl daemon-reload' >/dev/null 2>&1 & echo "Uninstall scheduled — agent will be fully removed in a few seconds"`;
 
   return (
     <div className="p-6">
@@ -197,10 +200,10 @@ export default function AgentDetail() {
                         setShowUpdateMenu(false);
                         setForceUpdateStatus('running');
                         try {
-                          await api.console.execute(
-                            agent.id,
-                            "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' 2>&1 | tail -30"
-                          );
+                          const updateCmd = isWindows
+                            ? `powershell -NoProfile -Command "$s=New-Object -ComObject Microsoft.Update.Session;$u=$s.CreateUpdateSearcher();$r=$u.Search('IsInstalled=0');$d=$s.CreateUpdateDownloader();$d.Updates=$r.Updates;$d.Download();$i=$s.CreateUpdateInstaller();$i.Updates=$r.Updates;$res=$i.Install();Write-Output ('Installed: '+$res.ResultCode)"`
+                            : "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' 2>&1 | tail -30";
+                          await api.console.execute(agent.id, updateCmd);
                           setForceUpdateStatus('success');
                           setTimeout(() => setForceUpdateStatus('idle'), 3000);
                         } catch {

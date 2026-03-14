@@ -272,9 +272,13 @@ IMPORTANT RULES:
 - Keep explanations brief (1-2 sentences max between commands)
 ` : "";
 
-  const systemPrompt = `You are an AI sysadmin assistant connected to a live Linux terminal on "${agent?.hostname ?? "unknown"}".
+  const isWindows = agent?.platform === "windows";
+  const terminalType = isWindows ? "Windows PowerShell" : "Linux terminal";
+
+  const systemPrompt = `You are an AI sysadmin assistant connected to a live ${terminalType} on "${agent?.hostname ?? "unknown"}".
 You have full conversation history for this session. Reference previous messages naturally.
 Your job: help the user troubleshoot issues, suggest commands, and document solutions.
+${isWindows ? "This is a Windows machine. Use PowerShell commands, not bash/Linux commands. Use Get-Service, Get-Process, Get-WinEvent, etc." : ""}
 ${autopilotInstructions}
 When suggesting a command to run, wrap it in a special block:
 \`\`\`suggest

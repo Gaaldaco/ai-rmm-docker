@@ -382,7 +382,10 @@ function DeleteModal({
 }) {
   const [uninstallStatus, setUninstallStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle');
   const [uninstallOutput, setUninstallOutput] = useState<string | null>(null);
-  const uninstallCmd = `nohup bash -c 'sleep 3 && systemctl stop ai-remote-agent && systemctl disable ai-remote-agent && rm -f /usr/local/bin/ai-remote-agent /etc/systemd/system/ai-remote-agent.service && rm -rf /etc/ai-remote-agent /var/log/ai-remote-agent && rm -f /etc/sudoers.d/airagent && userdel airagent 2>/dev/null; systemctl daemon-reload' >/dev/null 2>&1 & echo "Uninstall scheduled — agent will be fully removed in a few seconds"`;
+  const isWindows = agent.platform === 'windows';
+  const uninstallCmd = isWindows
+    ? `powershell -NoProfile -Command "Unregister-ScheduledTask -TaskName 'AIRemoteAgent' -Confirm:\\$false -ErrorAction SilentlyContinue; Stop-Process -Name 'ai-remote-agent*' -Force -ErrorAction SilentlyContinue; Remove-Item 'C:\\ProgramData\\ai-remote-agent' -Recurse -Force -ErrorAction SilentlyContinue; Write-Output 'Agent uninstalled successfully'"`
+    : `nohup bash -c 'sleep 3 && systemctl stop ai-remote-agent && systemctl disable ai-remote-agent && rm -f /usr/local/bin/ai-remote-agent /etc/systemd/system/ai-remote-agent.service && rm -rf /etc/ai-remote-agent /var/log/ai-remote-agent && rm -f /etc/sudoers.d/airagent && userdel airagent 2>/dev/null; systemctl daemon-reload' >/dev/null 2>&1 & echo "Uninstall scheduled — agent will be fully removed in a few seconds"`;
 
   const handleUninstall = async () => {
     setUninstallStatus('running');

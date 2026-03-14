@@ -61,9 +61,11 @@ interface AnalysisResult {
 function analyzeLocally(
   snapshot: Record<string, any>,
   hostname: string,
+  platform: string,
   monitored: Array<{ serviceName: string }>,
   kbEntries: Array<{ id: string; issuePattern: string; solution: string; successCount: number; failureCount: number }>
 ): AnalysisResult {
+  const isWindows = platform === "windows";
   const issues: Issue[] = [];
   let healthScore = 100;
 
@@ -143,7 +145,9 @@ function analyzeLocally(
         category: "performance",
         severity: "critical",
         description: `Disk ${d.mountpoint} critically full at ${usage.toFixed(0)}%`,
-        suggestedCommand: `journalctl --vacuum-size=100M && find /var/log -name '*.gz' -delete && find /tmp -atime +7 -delete  # clean logs and temp files on ${d.mountpoint}`,
+        suggestedCommand: isWindows
+          ? `powershell -NoProfile -Command "Clear-RecycleBin -Force -ErrorAction SilentlyContinue; Remove-Item $env:TEMP\\* -Recurse -Force -ErrorAction SilentlyContinue; Optimize-Volume -DriveLetter C -ReTrim -ErrorAction SilentlyContinue"  # clean temp files on ${d.mountpoint}`
+          : `journalctl --vacuum-size=100M && find /var/log -name '*.gz' -delete && find /tmp -atime +7 -delete  # clean logs and temp files on ${d.mountpoint}`,
         matchesKnownPattern: findKbMatch("high disk", kbEntries),
       });
       healthScore -= 25;
@@ -177,8 +181,10 @@ function analyzeLocally(
       severity: "critical",
       description: `${failures.length} auth failures from external IPs${topAttackIP ? ` (top: ${topAttackIP})` : ""}`,
       suggestedCommand: topAttackIP
-        ? `ufw deny from ${topAttackIP} && fail2ban-client set sshd banip ${topAttackIP}  # block top attacker`
-        : "fail2ban-client status sshd",
+        ? (isWindows
+            ? `powershell -NoProfile -Command "New-NetFirewallRule -DisplayName 'Block ${topAttackIP}' -Direction Inbound -RemoteAddress ${topAttackIP} -Action Block"`
+            : `ufw deny from ${topAttackIP} && fail2ban-client set sshd banip ${topAttackIP}  # block top attacker`)
+        : (isWindows ? `powershell -NoProfile -Command "Get-WinEvent -FilterHashtable @{LogName='Security';Id=4625} -MaxEvents 20 | Format-Table TimeCreated,Message -AutoSize"` : "fail2ban-client status sshd"),
       matchesKnownPattern: findKbMatch("auth failure", kbEntries),
     });
     healthScore -= 20;
@@ -200,7 +206,9 @@ function analyzeLocally(
       category: "update",
       severity: updates.length > 10 ? "warning" : "info",
       description: `${updates.length} pending package update(s)`,
-      suggestedCommand: "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' 2>&1 | tail -30",
+      suggestedCommand: isWindows
+        ? `powershell -NoProfile -Command "$s=New-Object -ComObject Microsoft.Update.Session;$u=$s.CreateUpdateSearcher();$r=$u.Search('IsInstalled=0');$d=$s.CreateUpdateDownloader();$d.Updates=$r.Updates;$d.Download();$i=$s.CreateUpdateInstaller();$i.Updates=$r.Updates;$i.Install()"`
+        : "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' 2>&1 | tail -30",
       matchesKnownPattern: findKbMatch("pending update", kbEntries),
     });
     if (updates.length > 10) healthScore -= 5;
@@ -216,7 +224,9 @@ function analyzeLocally(
         category: "availability",
         severity: "critical",
         description: `Monitored service "${mon.serviceName}" is ${svc?.status ?? "not found"} on ${hostname}`,
-        suggestedCommand: `systemctl restart ${mon.serviceName}`,
+        suggestedCommand: isWindows
+          ? `powershell -NoProfile -Command "Restart-Service -Name '${mon.serviceName}' -Force"`
+          : `systemctl restart ${mon.serviceName}`,
         matchesKnownPattern: findKbMatch(mon.serviceName, kbEntries),
       });
       healthScore -= 20;
@@ -362,7 +372,7 @@ const worker = new Worker(
       services: snapshot.services,
     };
 
-    const analysis = analyzeLocally(snapshotData, agent.hostname, monitored, kbMapped);
+    const analysis = analyzeLocally(snapshotData, agent.hostname, agent.platform, monitored, kbMapped);
 
     // 6. Only call AI for monitored service failures — CPU/memory/disk criticals
     //    are fully handled by rule-based analysis and don't need AI tokens
@@ -557,8 +567,11 @@ const worker = new Worker(
 
     // 9. Auto-update: if agent has autoUpdate enabled and there are pending updates
     const pendingUpdates = (snapshotData.pendingUpdates as any[]) ?? [];
+    const isWindowsAgent = agent.platform === "windows";
     if (agent.autoUpdate && pendingUpdates.length > 0) {
-      const UPDATE_CMD = "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' 2>&1 | tail -30";
+      const UPDATE_CMD = isWindowsAgent
+        ? `powershell -NoProfile -Command "$s=New-Object -ComObject Microsoft.Update.Session;$u=$s.CreateUpdateSearcher();$r=$u.Search('IsInstalled=0');$d=$s.CreateUpdateDownloader();$d.Updates=$r.Updates;$d.Download();$i=$s.CreateUpdateInstaller();$i.Updates=$r.Updates;$res=$i.Install();Write-Output ('Installed: '+$res.ResultCode)"`
+        : "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' 2>&1 | tail -30";
 
       // Check recent update attempts (last 6 hours)
       const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
@@ -569,9 +582,10 @@ const worker = new Worker(
         .orderBy(desc(remediationLog.executedAt))
         .limit(10);
 
+      const updateCmdMatch = isWindowsAgent ? "Microsoft.Update" : "apt-get upgrade";
       const recentUpdateAttempts = recentUpdates.filter(
         (r) =>
-          r.command.includes("apt-get upgrade") &&
+          r.command.includes(updateCmdMatch) &&
           new Date(r.executedAt) > sixHoursAgo
       );
 
@@ -592,7 +606,7 @@ const worker = new Worker(
 
         // Check if we already queued a fix for this failure
         const alreadyFixing = recentUpdateAttempts.some(
-          (r) => !r.command.includes("apt-get upgrade") && r.success === null
+          (r) => !r.command.includes(updateCmdMatch) && r.success === null
         );
 
         if (!alreadyFixing) {
@@ -600,7 +614,8 @@ const worker = new Worker(
             const fixCmd = await diagnoseUpdateFailure(
               lastUpdate.result,
               agent.hostname,
-              agent.os
+              agent.os,
+              agent.platform
             );
 
             if (fixCmd) {

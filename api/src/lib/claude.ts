@@ -274,12 +274,36 @@ Respond with ONLY the command (no explanation, no markdown):`;
 export async function diagnoseUpdateFailure(
   errorOutput: string,
   hostname: string,
-  os: string
+  os: string,
+  platform: string = "linux"
 ): Promise<string | null> {
   const client = await getClient();
   if (!client) return null;
 
-  const prompt = `You are a Linux sysadmin. An automatic "apt-get update && apt-get upgrade" failed on ${hostname} (${os}).
+  const isWindows = platform === "windows";
+
+  const prompt = isWindows
+    ? `You are a Windows sysadmin. An automatic Windows Update failed on ${hostname} (${os}).
+
+## Error output:
+${errorOutput}
+
+## Your task:
+Return a SINGLE PowerShell command that fixes the root cause so the update can succeed on retry.
+
+Common fixes:
+- "Get-Service wuauserv | Restart-Service -Force" for stuck Windows Update service
+- "DISM /Online /Cleanup-Image /RestoreHealth" for corrupted component store
+- "sfc /scannow" for corrupted system files
+- "Stop-Service wuauserv; Remove-Item C:\\Windows\\SoftwareDistribution\\* -Recurse -Force; Start-Service wuauserv" for corrupted update cache
+- "Get-WindowsUpdate -Install -AcceptAll -IgnoreReboot" if PSWindowsUpdate module is available
+
+RULES:
+- Return ONLY the command. No explanation, no markdown.
+- The command must be non-interactive (no prompts)
+- NEVER format drives, NEVER run Remove-Item on system directories, NEVER reboot
+- If you can't determine a fix, respond with "SKIP"`
+    : `You are a Linux sysadmin. An automatic "apt-get update && apt-get upgrade" failed on ${hostname} (${os}).
 
 ## Error output:
 ${errorOutput}
