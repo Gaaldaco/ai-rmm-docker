@@ -11,9 +11,22 @@ import {
 } from "../db/schema.js";
 import { eq, desc, and, or } from "drizzle-orm";
 import { analyzeWithAI, generateDynamicRemediation, diagnoseUpdateFailure } from "../lib/claude.js";
+import { createClient } from "redis";
 
 const redisUrl =
   process.env.REDIS_URL || "redis://localhost:6379";
+
+// Redis publisher for pushing commands to agents via WebSocket
+const publisher = createClient({ url: redisUrl });
+publisher.connect().catch((err) => console.error("[worker] Redis publisher connect error:", err));
+
+async function publishCommand(agentId: string, commandId: string, command: string) {
+  try {
+    await publisher.publish("agent:command", JSON.stringify({ agentId, commandId, command }));
+  } catch (err) {
+    console.error("[worker] Failed to publish command:", err);
+  }
+}
 
 const connection = { url: redisUrl };
 
@@ -498,12 +511,13 @@ const worker = new Worker(
             console.log(
               `[worker] Auto-remediating existing alert: ${remediationCommand} on ${agent.hostname}`
             );
-            await db.insert(remediationLog).values({
+            const [remedEntry1] = await db.insert(remediationLog).values({
               agentId: agent.id,
               alertId: existingAlert.id,
               kbEntryId: matchedKb!.id,
               command: remediationCommand,
-            });
+            }).returning();
+            await publishCommand(agent.id, remedEntry1.id, remediationCommand);
           }
         }
         continue;
@@ -531,12 +545,13 @@ const worker = new Worker(
           `[worker] Auto-remediating: ${remediationCommand} on ${agent.hostname}`
         );
 
-        await db.insert(remediationLog).values({
+        const [remedEntry2] = await db.insert(remediationLog).values({
           agentId: agent.id,
           alertId: alert.id,
           kbEntryId: matchedKb!.id,
           command: remediationCommand,
-        });
+        }).returning();
+        await publishCommand(agent.id, remedEntry2.id, remediationCommand);
       }
     }
 
@@ -566,10 +581,11 @@ const worker = new Worker(
       if (!lastUpdate) {
         // No recent attempt — queue the update
         console.log(`[worker] Auto-update: queuing ${pendingUpdates.length} package updates on ${agent.hostname}`);
-        await db.insert(remediationLog).values({
+        const [remedEntry3] = await db.insert(remediationLog).values({
           agentId: agent.id,
           command: UPDATE_CMD,
-        });
+        }).returning();
+        await publishCommand(agent.id, remedEntry3.id, UPDATE_CMD);
       } else if (lastUpdate.success === false && lastUpdate.result) {
         // Last update FAILED — use AI to diagnose and fix, then retry
         console.log(`[worker] Auto-update failed on ${agent.hostname}, using AI to diagnose...`);
@@ -590,15 +606,17 @@ const worker = new Worker(
             if (fixCmd) {
               console.log(`[worker] AI fix for update failure: ${fixCmd}`);
               // Queue the fix command
-              await db.insert(remediationLog).values({
+              const [remedEntry4] = await db.insert(remediationLog).values({
                 agentId: agent.id,
                 command: fixCmd,
-              });
+              }).returning();
+              await publishCommand(agent.id, remedEntry4.id, fixCmd);
               // Queue a retry of the update after the fix
-              await db.insert(remediationLog).values({
+              const [remedEntry5] = await db.insert(remediationLog).values({
                 agentId: agent.id,
                 command: UPDATE_CMD,
-              });
+              }).returning();
+              await publishCommand(agent.id, remedEntry5.id, UPDATE_CMD);
             }
           } catch (err) {
             console.error(`[worker] AI update diagnosis failed:`, err);
@@ -609,10 +627,11 @@ const worker = new Worker(
         const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
         if (new Date(lastUpdate.executedAt) < oneDayAgo) {
           console.log(`[worker] Auto-update: re-queuing updates on ${agent.hostname} (24h since last success)`);
-          await db.insert(remediationLog).values({
+          const [remedEntry6] = await db.insert(remediationLog).values({
             agentId: agent.id,
             command: UPDATE_CMD,
-          });
+          }).returning();
+          await publishCommand(agent.id, remedEntry6.id, UPDATE_CMD);
         }
       }
       // If lastUpdate.success === null, it's still pending — don't queue another

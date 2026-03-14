@@ -16,6 +16,7 @@ import consoleRouter, { purgeOldSessions } from "./routes/console.js";
 import setupRouter from "./routes/setup.js";
 import { errorHandler } from "./middleware/error.js";
 import { startHeartbeatMonitor } from "./lib/heartbeat.js";
+import { setupAgentWebSocket } from "./ws/agentSocket.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 8080);
@@ -123,7 +124,22 @@ app.get("/install.sh", (req, res) => {
     'echo "  SAVE THIS KEY — it will NOT be shown again."',
     'echo ""',
     '',
-    '# Install',
+    '# Create service account',
+    'if ! id -u airagent >/dev/null 2>&1; then',
+    '  useradd --system --shell /usr/sbin/nologin --home-dir /etc/ai-remote-agent airagent',
+    '  echo "Created airagent service account"',
+    'fi',
+    '',
+    '# Grant passwordless sudo',
+    'cat > /etc/sudoers.d/airagent <<\'SUDOERS\'',
+    'airagent ALL=(ALL) NOPASSWD: ALL',
+    'SUDOERS',
+    'chmod 440 /etc/sudoers.d/airagent',
+    '',
+    '# Add to adm group for log access',
+    'usermod -aG adm airagent 2>/dev/null || true',
+    '',
+    '# Install binary and config',
     'mkdir -p /etc/ai-remote-agent /var/log/ai-remote-agent',
     'mv /tmp/ai-remote-agent /usr/local/bin/ai-remote-agent',
     'chmod +x /usr/local/bin/ai-remote-agent',
@@ -134,9 +150,10 @@ app.get("/install.sh", (req, res) => {
     'agent_name: "${AGENT_NAME}"',
     'snapshot_interval: 60',
     'heartbeat_interval: 30',
-    'command_poll_interval: 5',
+    'tls_skip_verify: false',
     'CONF',
     'chmod 600 /etc/ai-remote-agent/config.yaml',
+    'chown -R airagent:airagent /etc/ai-remote-agent /var/log/ai-remote-agent',
     '',
     'cat > /etc/systemd/system/ai-remote-agent.service <<SVC',
     '[Unit]',
@@ -149,7 +166,8 @@ app.get("/install.sh", (req, res) => {
     'ExecStart=/usr/local/bin/ai-remote-agent',
     'Restart=always',
     'RestartSec=10',
-    'User=root',
+    'User=airagent',
+    'Group=airagent',
     'StandardOutput=journal',
     'StandardError=journal',
     'SyslogIdentifier=ai-remote-agent',
@@ -192,13 +210,16 @@ const server = app.listen(PORT, () => {
   console.log(`[api] AI Remote Service API listening on port ${PORT}`);
 });
 
-// ─── WebSocket server for real-time updates ──────────────────────────────────
+// ─── WebSocket server for frontend real-time updates ────────────────────────
 const wss = new WebSocketServer({ server, path: "/ws" });
 
 wss.on("connection", (ws) => {
-  console.log("[ws] Client connected");
-  ws.on("close", () => console.log("[ws] Client disconnected"));
+  console.log("[ws] Dashboard client connected");
+  ws.on("close", () => console.log("[ws] Dashboard client disconnected"));
 });
+
+// ─── WebSocket server for agent connections ─────────────────────────────────
+setupAgentWebSocket(server);
 
 // Export for use by workers to broadcast events
 export function broadcast(event: string, data: unknown) {

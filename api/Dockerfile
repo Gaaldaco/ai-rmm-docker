@@ -1,9 +1,10 @@
 ## ─── Stage 1: Build agent binaries (Go) ─────────────────────────────────────
 FROM golang:1.22-alpine AS agent-builder
 WORKDIR /agent
-COPY agent/go.mod agent/go.sum ./
-RUN go mod download
+COPY agent/go.mod agent/go.sum* ./
+RUN go mod download || true
 COPY agent/ .
+RUN go mod tidy
 RUN GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o bin/ai-remote-agent-linux-amd64 ./cmd/agent
 RUN GOOS=linux GOARCH=arm64 go build -ldflags "-s -w" -o bin/ai-remote-agent-linux-arm64 ./cmd/agent
 

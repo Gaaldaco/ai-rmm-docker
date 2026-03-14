@@ -9,6 +9,8 @@ import {
 import { eq, desc, and, isNull } from "drizzle-orm";
 import { agentAuth } from "../middleware/agentAuth.js";
 import { commandResultSchema } from "../types/snapshot.js";
+import { pushCommandToAgent } from "../ws/agentSocket.js";
+import { redis } from "../lib/redis.js";
 
 const router = Router();
 
@@ -142,7 +144,13 @@ router.post("/manual", async (req, res) => {
     })
     .returning();
 
-  res.status(201).json(entry);
+  // Push command to agent via WebSocket (direct or Redis fallback)
+  const pushed = pushCommandToAgent(agentId, { id: entry.id, command });
+  if (!pushed) {
+    await redis.publish("agent:command", JSON.stringify({ agentId, commandId: entry.id, command }));
+  }
+
+  res.status(201).json({ ...entry, delivered: pushed });
 });
 
 // Get remediation log (paginated)

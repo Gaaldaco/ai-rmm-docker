@@ -28,7 +28,7 @@ func Execute(command string, timeout time.Duration) Result {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+	cmd := exec.CommandContext(ctx, "sudo", "bash", "-c", command)
 
 	output, err := cmd.CombinedOutput()
 

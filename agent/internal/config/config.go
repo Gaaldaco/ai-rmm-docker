@@ -7,12 +7,12 @@ import (
 )
 
 type Config struct {
-	APIUrl           string `yaml:"api_url"`
-	APIKey           string `yaml:"api_key"`
-	AgentName        string `yaml:"agent_name"`
-	SnapshotInterval int    `yaml:"snapshot_interval"` // seconds
-	HeartbeatInterval int   `yaml:"heartbeat_interval"` // seconds
-	CommandPollInterval int  `yaml:"command_poll_interval"` // seconds
+	APIUrl            string `yaml:"api_url"`
+	APIKey            string `yaml:"api_key"`
+	AgentName         string `yaml:"agent_name"`
+	SnapshotInterval  int    `yaml:"snapshot_interval"`   // seconds
+	HeartbeatInterval int    `yaml:"heartbeat_interval"`  // seconds
+	TLSSkipVerify     bool   `yaml:"tls_skip_verify"`     // skip TLS cert verification (dev only)
 }
 
 const DefaultConfigPath = "/etc/ai-remote-agent/config.yaml"
@@ -24,9 +24,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		SnapshotInterval:    60,
-		HeartbeatInterval:   30,
-		CommandPollInterval: 10,
+		SnapshotInterval:  60,
+		HeartbeatInterval: 30,
+		TLSSkipVerify:     false,
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {

@@ -12,6 +12,8 @@ import {
 } from "../db/schema.js";
 import { eq, desc, asc, and } from "drizzle-orm";
 import { getSetting } from "../lib/settings.js";
+import { pushCommandToAgent } from "../ws/agentSocket.js";
+import { redis } from "../lib/redis.js";
 
 const router = Router();
 
@@ -114,7 +116,13 @@ router.post("/:agentId/execute", async (req, res) => {
     .values({ agentId, command })
     .returning();
 
-  res.json({ id: entry.id, status: "queued" });
+  // Push command to agent via WebSocket (direct or Redis fallback)
+  const pushed = pushCommandToAgent(agentId, { id: entry.id, command });
+  if (!pushed) {
+    await redis.publish("agent:command", JSON.stringify({ agentId, commandId: entry.id, command }));
+  }
+
+  res.json({ id: entry.id, status: pushed ? "sent" : "queued" });
 });
 
 // GET /:agentId/result/:remediationId - poll for command result

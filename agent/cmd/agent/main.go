@@ -11,7 +11,7 @@ import (
 	"github.com/Gaaldaco/ai-remote-agent/internal/collector"
 	"github.com/Gaaldaco/ai-remote-agent/internal/config"
 	"github.com/Gaaldaco/ai-remote-agent/internal/executor"
-	"github.com/Gaaldaco/ai-remote-agent/internal/reporter"
+	"github.com/Gaaldaco/ai-remote-agent/internal/ws"
 )
 
 type Snapshot struct {
@@ -47,25 +47,53 @@ func main() {
 		log.Fatal("[agent] api_url and api_key must be set in config")
 	}
 
-	client := reporter.NewClient(cfg.APIUrl, cfg.APIKey)
+	// Create WebSocket client with command handler
+	client = ws.NewClient(cfg.APIUrl, cfg.APIKey, cfg.TLSSkipVerify, func(cmd ws.Command) {
+		log.Printf("[agent] Received command: %s", cmd.Command)
+		result := executor.Execute(cmd.Command, executor.DefaultTimeout)
 
-	log.Printf("[agent] Connected to %s", cfg.APIUrl)
-	log.Printf("[agent] Snapshot interval: %ds, Heartbeat: %ds, Command poll: %ds",
-		cfg.SnapshotInterval, cfg.HeartbeatInterval, cfg.CommandPollInterval)
+		err := client.SendCommandResult(ws.CommandResult{
+			ID:       cmd.ID,
+			Output:   result.Output,
+			ExitCode: result.ExitCode,
+			Success:  result.Success,
+		})
+		if err != nil {
+			log.Printf("[agent] Failed to send command result for %s: %v", cmd.ID, err)
+		}
+	})
+
+	// Connect with automatic retry
+	log.Printf("[agent] Connecting to %s via WebSocket...", cfg.APIUrl)
+	go client.ConnectWithRetry()
+
+	// Wait for initial connection
+	for i := 0; i < 30; i++ {
+		if client.IsConnected() {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+
+	if client.IsConnected() {
+		log.Println("[agent] WebSocket connected")
+	} else {
+		log.Println("[agent] Warning: not connected yet, will keep retrying in background")
+	}
 
 	// Start tickers
 	snapshotTicker := time.NewTicker(time.Duration(cfg.SnapshotInterval) * time.Second)
 	heartbeatTicker := time.NewTicker(time.Duration(cfg.HeartbeatInterval) * time.Second)
-	commandTicker := time.NewTicker(time.Duration(cfg.CommandPollInterval) * time.Second)
 
-	// Send initial snapshot immediately
+	// Send initial snapshot
 	go sendSnapshot(client)
 
 	// Signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	log.Println("[agent] Running. Press Ctrl+C to stop.")
+	log.Printf("[agent] Running (snapshot: %ds, heartbeat: %ds). Press Ctrl+C to stop.",
+		cfg.SnapshotInterval, cfg.HeartbeatInterval)
 
 	for {
 		select {
@@ -79,20 +107,25 @@ func main() {
 				}
 			}()
 
-		case <-commandTicker.C:
-			go pollCommands(client)
-
 		case sig := <-sigChan:
 			log.Printf("[agent] Received signal %v, shutting down...", sig)
 			snapshotTicker.Stop()
 			heartbeatTicker.Stop()
-			commandTicker.Stop()
+			client.Close()
 			os.Exit(0)
 		}
 	}
 }
 
-func sendSnapshot(client *reporter.Client) {
+// client is declared at package level so the command handler closure can reference it
+var client *ws.Client
+
+func sendSnapshot(c *ws.Client) {
+	if !c.IsConnected() {
+		log.Println("[agent] Skipping snapshot — not connected")
+		return
+	}
+
 	log.Println("[agent] Collecting system data...")
 
 	sysInfo := collector.CollectSystemInfo()
@@ -124,32 +157,10 @@ func sendSnapshot(client *reporter.Client) {
 		Services:       services,
 	}
 
-	if err := client.SendSnapshot(snapshot); err != nil {
+	if err := c.SendSnapshot(snapshot); err != nil {
 		log.Printf("[agent] Snapshot send failed: %v", err)
 	} else {
 		log.Printf("[agent] Snapshot sent (CPU: %.1f%%, Mem: %.1f%%, Services: %d)",
 			cpu.UsagePercent, memory.UsagePercent, len(services))
-	}
-}
-
-func pollCommands(client *reporter.Client) {
-	commands, err := client.PollCommands()
-	if err != nil {
-		log.Printf("[agent] Command poll failed: %v", err)
-		return
-	}
-
-	for _, cmd := range commands {
-		log.Printf("[agent] Executing command: %s", cmd.Command)
-		result := executor.Execute(cmd.Command, executor.DefaultTimeout)
-
-		err := client.ReportCommandResult(cmd.ID, reporter.CommandResult{
-			Output:   result.Output,
-			ExitCode: result.ExitCode,
-			Success:  result.Success,
-		})
-		if err != nil {
-			log.Printf("[agent] Failed to report result for %s: %v", cmd.ID, err)
-		}
 	}
 }
