@@ -6,8 +6,8 @@ const API_URL = import.meta.env.VITE_API_URL || window.location.origin;
 export default function Settings() {
   const [copied, setCopied] = useState('');
 
-  const installCommand = `curl -sSL ${API_URL}/install.sh -o /tmp/install.sh && bash /tmp/install.sh`;
-  const updateCommand = `curl -sL ${API_URL}/api/agents/binary/linux-amd64 -o /usr/local/bin/ai-remote-agent && chmod +x /usr/local/bin/ai-remote-agent && systemctl restart ai-remote-agent`;
+  const installCommand = `curl -sSL ${API_URL}/install.sh | bash`;
+  const updateCommand = `curl -sL ${API_URL}/api/agents/download/linux-amd64 -o /usr/local/bin/ai-remote-agent && chmod +x /usr/local/bin/ai-remote-agent && systemctl restart ai-remote-agent`;
   const uninstallCommand = `nohup bash -c 'sleep 3 && systemctl stop ai-remote-agent && systemctl disable ai-remote-agent && rm -f /usr/local/bin/ai-remote-agent /etc/systemd/system/ai-remote-agent.service && rm -rf /etc/ai-remote-agent && systemctl daemon-reload && echo "Agent uninstalled successfully"' >/dev/null 2>&1 & echo "Uninstall scheduled — agent will be removed in a few seconds"`;
 
   const handleCopy = (text: string, key: string) => {
