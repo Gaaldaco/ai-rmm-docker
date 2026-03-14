@@ -3,17 +3,19 @@ set -e
 
 cd "$(dirname "$0")"
 
+# ─── Cloud platform detection ─────────────────────────────────────────────────
+# start.sh is for local Docker only. Cloud platforms handle deployment natively.
+if [ -n "$RAILWAY_ENVIRONMENT" ] || [ -n "$RENDER_SERVICE_ID" ] || [ -n "$FLY_APP_NAME" ]; then
+  echo "Cloud platform detected — start.sh is not needed here."
+  echo "The app will start automatically using the platform's configuration."
+  exit 0
+fi
+
 # ─── Check prerequisites ──────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
   echo ""
   echo "Error: Docker is not installed."
-  echo ""
-  echo "Install Docker first:"
-  echo "  https://docs.docker.com/get-docker/"
-  echo ""
-  echo "Or if deploying to a cloud platform (Railway, Render, etc.),"
-  echo "just deploy the repo directly — the setup wizard will appear"
-  echo "in your browser when you open the app."
+  echo "Install Docker: https://docs.docker.com/get-docker/"
   exit 1
 fi
 
