@@ -13,7 +13,6 @@ router.get("/status", async (_req, res) => {
       configured,
       // Only expose non-sensitive settings
       serverAddress: settings["SERVER_ADDRESS"] || "",
-      githubRepo: settings["GITHUB_REPO"] || process.env.GITHUB_REPO || "",
     });
   } catch (err) {
     // If DB isn't ready yet, we're definitely not configured
@@ -24,7 +23,7 @@ router.get("/status", async (_req, res) => {
 // Save setup configuration
 router.post("/", async (req, res) => {
   try {
-    const { anthropicApiKey, serverAddress, githubRepo } = req.body;
+    const { anthropicApiKey, serverAddress } = req.body;
 
     if (!anthropicApiKey) {
       res.status(400).json({ error: "Anthropic API Key is required" });
@@ -36,10 +35,6 @@ router.post("/", async (req, res) => {
     if (serverAddress) {
       await setSetting("SERVER_ADDRESS", serverAddress);
     }
-    if (githubRepo !== undefined) {
-      await setSetting("GITHUB_REPO", githubRepo);
-    }
-
     // Reset the Claude client so it picks up the new key
     resetClient();
 

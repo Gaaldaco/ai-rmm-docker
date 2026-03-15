@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Shield, Key, Server, Github, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { Shield, Key, Server, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface SetupProps {
   onComplete: () => void;
@@ -8,7 +8,6 @@ interface SetupProps {
 export default function Setup({ onComplete }: SetupProps) {
   const [anthropicApiKey, setAnthropicApiKey] = useState('');
   const [serverAddress, setServerAddress] = useState('');
-  const [githubRepo, setGithubRepo] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -29,7 +28,6 @@ export default function Setup({ onComplete }: SetupProps) {
         body: JSON.stringify({
           anthropicApiKey: anthropicApiKey.trim(),
           serverAddress: serverAddress.trim(),
-          githubRepo: githubRepo.trim(),
         }),
       });
 
@@ -124,24 +122,6 @@ export default function Setup({ onComplete }: SetupProps) {
                 </p>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1.5">
-                  <span className="flex items-center gap-1.5">
-                    <Github className="w-3.5 h-3.5 text-gray-400" />
-                    GitHub Repo
-                  </span>
-                </label>
-                <input
-                  type="text"
-                  value={githubRepo}
-                  onChange={(e) => setGithubRepo(e.target.value)}
-                  placeholder="e.g. your-org/ai-rmm-docker"
-                  className="w-full px-3 py-2.5 bg-[#0a0a0f] border border-gray-700 rounded-lg text-white text-sm font-mono placeholder-gray-600 focus:outline-none focus:border-emerald-500 transition-colors"
-                />
-                <p className="text-[11px] text-gray-600 mt-1">
-                  For agent binary downloads (org/repo format). Leave blank to distribute manually.
-                </p>
-              </div>
             </div>
           </div>
 
