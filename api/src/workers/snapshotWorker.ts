@@ -330,6 +330,12 @@ const worker = new Worker(
       return;
     }
 
+    // Normalize platform: if DB still has the "linux" default but OS string says Windows, correct it
+    if (agent.platform !== "windows" && agent.os?.toLowerCase().includes("windows")) {
+      agent.platform = "windows";
+      await db.update(agents).set({ platform: "windows" }).where(eq(agents.id, agentId));
+    }
+
     // 3. Fetch monitored services
     const monitored = await db
       .select({ serviceName: monitoredServices.serviceName })

@@ -83,7 +83,16 @@ export function setupAgentWebSocket(server: Server) {
         .where(and(eq(remediationLog.agentId, agent.id), isNull(remediationLog.success)))
         .limit(20);
 
+      const isWindows = agent.platform === "windows" || agent.os?.toLowerCase().includes("windows");
       for (const cmd of pendingCmds) {
+        // Skip commands that don't match the agent's platform to avoid sending Linux
+        // commands to Windows agents (or vice versa) when the platform was mis-detected
+        const isLinuxCmd = cmd.command.includes("apt-get") || cmd.command.startsWith("bash ") || cmd.command.startsWith("systemctl ");
+        if (isWindows && isLinuxCmd) {
+          // Mark as failed so it's not retried, and skip delivery
+          await db.update(remediationLog).set({ success: false, result: "Skipped: command is not compatible with Windows platform" }).where(eq(remediationLog.id, cmd.id));
+          continue;
+        }
         ws.send(JSON.stringify({ type: "command", data: { id: cmd.id, command: cmd.command } }));
       }
     } catch (err) {
