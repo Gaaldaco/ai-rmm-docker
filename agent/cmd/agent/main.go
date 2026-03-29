@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -36,7 +37,10 @@ func main() {
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Println("[agent] AI Remote Agent starting...")
+
+	// Detect platform at runtime
+	isWindows := runtime.GOOS == "windows"
+	log.Printf("[agent] AI Remote Agent starting... (platform: %s)", runtime.GOOS)
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -86,7 +90,7 @@ func main() {
 	heartbeatTicker := time.NewTicker(time.Duration(cfg.HeartbeatInterval) * time.Second)
 
 	// Send initial snapshot
-	go sendSnapshot(client)
+	go sendSnapshot(client, isWindows)
 
 	// Signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -98,7 +102,7 @@ func main() {
 	for {
 		select {
 		case <-snapshotTicker.C:
-			go sendSnapshot(client)
+			go sendSnapshot(client, isWindows)
 
 		case <-heartbeatTicker.C:
 			go func() {
@@ -120,7 +124,7 @@ func main() {
 // client is declared at package level so the command handler closure can reference it
 var client *ws.Client
 
-func sendSnapshot(c *ws.Client) {
+func sendSnapshot(c *ws.Client, isWindows bool) {
 	if !c.IsConnected() {
 		log.Println("[agent] Skipping snapshot — not connected")
 		return
@@ -162,5 +166,10 @@ func sendSnapshot(c *ws.Client) {
 	} else {
 		log.Printf("[agent] Snapshot sent (CPU: %.1f%%, Mem: %.1f%%, Services: %d)",
 			cpu.UsagePercent, memory.UsagePercent, len(services))
+	}
+
+	// Log Windows-specific status
+	if isWindows {
+		log.Printf("[agent] Windows update check: %d pending updates", len(updates))
 	}
 }
