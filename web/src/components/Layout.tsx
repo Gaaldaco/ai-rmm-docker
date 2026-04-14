@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import {
   Monitor, Bell, BookOpen, Settings, Activity, Terminal,
-  LayoutDashboard, Shield,
+  LayoutDashboard, Shield, ArrowUpCircle,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -28,6 +28,36 @@ const navSections = [
     ],
   },
 ];
+
+function UpdateBanner() {
+  const { data } = useQuery({
+    queryKey: ['versionCheck'],
+    queryFn: api.version.check,
+    refetchInterval: 6 * 60 * 60 * 1000, // check every 6 hours
+    staleTime: 6 * 60 * 60 * 1000,
+  });
+
+  if (!data?.updateAvailable) return null;
+
+  return (
+    <div className="mx-2 mb-2">
+      <a
+        href={data.releaseUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg no-underline hover:bg-emerald-500/15 transition-colors"
+      >
+        <div className="flex items-center gap-2 text-emerald-400 text-xs font-medium mb-1">
+          <ArrowUpCircle className="w-3.5 h-3.5" />
+          Update available
+        </div>
+        <div className="text-[11px] text-gray-400">
+          v{data.current} &rarr; v{data.latest}
+        </div>
+      </a>
+    </div>
+  );
+}
 
 export default function Layout() {
   const location = useLocation();
@@ -90,6 +120,9 @@ export default function Layout() {
             </div>
           ))}
         </nav>
+
+        {/* Update banner */}
+        <UpdateBanner />
 
         {/* Footer */}
         <div className="px-4 py-3 border-t border-gray-800 text-[10px] text-gray-600">

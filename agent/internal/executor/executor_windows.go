@@ -14,6 +14,15 @@ func Execute(command string, timeout time.Duration) Result {
 		timeout = DefaultTimeout
 	}
 
+	if ok, reason := IsSafeCommand(command); !ok {
+		log.Printf("[executor] Blocked unsafe command (%s): %s", reason, command)
+		return Result{
+			Output:   "Error: command blocked by safety policy — " + reason,
+			ExitCode: -1,
+			Success:  false,
+		}
+	}
+
 	log.Printf("[executor] Running: %s", command)
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

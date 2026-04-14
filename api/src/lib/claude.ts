@@ -33,6 +33,46 @@ export function resetClient() {
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 const SONNET_MODEL = "claude-sonnet-4-20250514";
 
+function sanitizeForPrompt(text: string): string {
+  // Strip common prompt injection patterns
+  return text
+    .replace(/ignore\s+(all\s+)?(previous|above|prior)\s+(instructions?|prompts?)/gi, '[FILTERED]')
+    .replace(/system\s*:\s*/gi, '[FILTERED]')
+    .replace(/\n{3,}/g, '\n\n')  // collapse excessive newlines
+    .slice(0, 500);  // truncate overly long strings
+}
+
+function sanitizeSnapshot(snapshot: Record<string, unknown>): Record<string, unknown> {
+  const sanitized = { ...snapshot };
+
+  // Sanitize process names
+  if (Array.isArray(sanitized.processes)) {
+    sanitized.processes = (sanitized.processes as any[]).map((p: any) => ({
+      ...p,
+      name: p.name ? sanitizeForPrompt(String(p.name)) : p.name,
+      command: p.command ? sanitizeForPrompt(String(p.command)) : p.command,
+    }));
+  }
+
+  // Sanitize service names
+  if (Array.isArray(sanitized.services)) {
+    sanitized.services = (sanitized.services as any[]).map((s: any) => ({
+      ...s,
+      name: s.name ? sanitizeForPrompt(String(s.name)) : s.name,
+      serviceName: s.serviceName ? sanitizeForPrompt(String(s.serviceName)) : s.serviceName,
+    }));
+  }
+
+  // Sanitize auth log entries
+  if (Array.isArray(sanitized.authLog)) {
+    sanitized.authLog = (sanitized.authLog as any[]).map((entry: any) =>
+      typeof entry === 'string' ? sanitizeForPrompt(entry) : entry
+    );
+  }
+
+  return sanitized;
+}
+
 function extractJSON(text: string): string {
   const match = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   if (match) return match[1].trim();
@@ -96,7 +136,7 @@ export async function analyzeWithAI(
 - Ports used by the RMM dashboard (typically 3000, 5000, or similar web ports) are part of this management system.
 - Failed SSH login attempts from private IPs followed by success = normal admin login with a typo, NOT a brute-force attack.
 
-## Machine: "${agentName}" (${agentHostname}, ${agentOS})
+## Machine: "${sanitizeForPrompt(agentName)}" (${sanitizeForPrompt(agentHostname)}, ${sanitizeForPrompt(agentOS)})
 
 ## Rule-based analysis already found these issues:
 ${localAnalysis.issues.map((i) => `- [${i.severity}] ${i.category}: ${i.description}`).join("\n")}
@@ -104,10 +144,10 @@ ${localAnalysis.issues.map((i) => `- [${i.severity}] ${i.category}: ${i.descript
 Local health score: ${localAnalysis.healthScore}/100
 
 ## Snapshot Data
-${JSON.stringify(snapshot, null, 2)}
+${JSON.stringify(sanitizeSnapshot(snapshot), null, 2)}
 
 ## Monitored Services
-${monitoredServices.map((s) => `- ${s.serviceName}`).join("\n") || "None"}
+${monitoredServices.map((s) => `- ${sanitizeForPrompt(s.serviceName)}`).join("\n") || "None"}
 
 ## Known Solutions Database
 ${knowledgeEntries.map((k) => `[${k.id}] Pattern: "${k.issuePattern}" → Solution: "${k.solution}" (${k.successCount} successes, ${k.failureCount} failures)`).join("\n") || "Empty"}
@@ -225,11 +265,11 @@ ${kbEntry.solution}
 ## Diagnostic Path (from last time this was fixed)
 ${steps.map((s, i) => `${i + 1}. [${s.type}] ${s.command} — ${s.reason}`).join("\n")}
 
-## Current Machine State (${hostname})
-Processes: ${JSON.stringify((snapshot.processes as any[])?.slice(0, 15) ?? [])}
+## Current Machine State (${sanitizeForPrompt(hostname)})
+Processes: ${JSON.stringify((sanitizeSnapshot(snapshot).processes as any[])?.slice(0, 15) ?? [])}
 CPU: ${JSON.stringify(snapshot.cpu)}
 Memory: ${JSON.stringify(snapshot.memory)}
-Services: ${JSON.stringify(snapshot.services)}
+Services: ${JSON.stringify(sanitizeSnapshot(snapshot).services)}
 
 ## Your task
 Based on the documented fix path and CURRENT machine state, output the SINGLE command that should be run right now to fix this issue.
@@ -281,12 +321,15 @@ export async function diagnoseUpdateFailure(
   if (!client) return null;
 
   const isWindows = platform === "windows";
+  const safeHostname = sanitizeForPrompt(hostname);
+  const safeOs = sanitizeForPrompt(os);
+  const safeErrorOutput = sanitizeForPrompt(errorOutput);
 
   const prompt = isWindows
-    ? `You are a Windows sysadmin. An automatic Windows Update failed on ${hostname} (${os}).
+    ? `You are a Windows sysadmin. An automatic Windows Update failed on ${safeHostname} (${safeOs}).
 
 ## Error output:
-${errorOutput}
+${safeErrorOutput}
 
 ## Your task:
 Return a SINGLE PowerShell command that fixes the root cause so the update can succeed on retry.
@@ -303,10 +346,10 @@ RULES:
 - The command must be non-interactive (no prompts)
 - NEVER format drives, NEVER run Remove-Item on system directories, NEVER reboot
 - If you can't determine a fix, respond with "SKIP"`
-    : `You are a Linux sysadmin. An automatic "apt-get update && apt-get upgrade" failed on ${hostname} (${os}).
+    : `You are a Linux sysadmin. An automatic "apt-get update && apt-get upgrade" failed on ${safeHostname} (${safeOs}).
 
 ## Error output:
-${errorOutput}
+${safeErrorOutput}
 
 ## Your task:
 Return a SINGLE shell command that fixes the root cause so the update can succeed on retry.

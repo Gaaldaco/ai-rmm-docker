@@ -3,6 +3,7 @@ set -e
 
 # AI Remote Agent Installer
 # Usage: API_URL=http://your-server:8080 bash install.sh
+# Optional: REGISTRATION_TOKEN=<token> API_URL=http://your-server:8080 bash install.sh
 
 # ─── Configuration (override via environment) ────────────────────────────────
 if [ -z "$API_URL" ]; then
@@ -59,6 +60,28 @@ if [ -n "$REPO" ]; then
     exit 1
   fi
   echo "Download complete."
+
+  # Verify SHA256 checksum
+  CHECKSUM_URL="https://github.com/${REPO}/releases/latest/download/${BINARY_NAME}-${BINARY_SUFFIX}.sha256"
+  HTTP_CODE=$(curl -sL -w "%{http_code}" -o "/tmp/${BINARY_NAME}.sha256" "$CHECKSUM_URL")
+  if [ "$HTTP_CODE" = "200" ]; then
+    echo "Verifying checksum..."
+    # The .sha256 file may contain just the hash or "hash  filename" format.
+    # Normalise to the format sha256sum --check expects.
+    EXPECTED_HASH=$(awk '{print $1}' "/tmp/${BINARY_NAME}.sha256")
+    echo "${EXPECTED_HASH}  /tmp/${BINARY_NAME}" > "/tmp/${BINARY_NAME}.sha256"
+    if ! sha256sum --check "/tmp/${BINARY_NAME}.sha256" --status; then
+      echo "Error: Checksum verification failed — binary may be corrupt or tampered with."
+      rm -f "/tmp/${BINARY_NAME}" "/tmp/${BINARY_NAME}.sha256"
+      exit 1
+    fi
+    echo "Checksum verified."
+    rm -f "/tmp/${BINARY_NAME}.sha256"
+  else
+    echo "Warning: No checksum file found for this release (HTTP $HTTP_CODE). Skipping verification."
+    rm -f "/tmp/${BINARY_NAME}.sha256"
+  fi
+
 elif [ -n "$BINARY_URL" ]; then
   echo "Downloading agent binary..."
   HTTP_CODE=$(curl -sL -w "%{http_code}" -o "/tmp/${BINARY_NAME}" "$BINARY_URL")
@@ -67,6 +90,7 @@ elif [ -n "$BINARY_URL" ]; then
     exit 1
   fi
   echo "Download complete."
+  echo "Warning: No checksum verification available for BINARY_URL downloads."
 else
   echo "Error: Set REPO (GitHub org/repo) or BINARY_URL to download the agent binary."
   exit 1
@@ -85,8 +109,12 @@ fi
 # Register with API
 echo ""
 echo "Registering agent with API..."
+REG_HEADERS=(-H "Content-Type: application/json")
+if [ -n "$REGISTRATION_TOKEN" ]; then
+  REG_HEADERS+=(-H "x-registration-token: ${REGISTRATION_TOKEN}")
+fi
 RESPONSE=$(curl -s -X POST "${API_URL}/api/agents/register" \
-  -H "Content-Type: application/json" \
+  "${REG_HEADERS[@]}" \
   -d "{\"name\": \"${AGENT_NAME}\", \"hostname\": \"$(hostname)\", \"os\": \"${OS_INFO}\", \"arch\": \"${ARCH}\", \"platform\": \"linux\"}")
 
 API_KEY=$(echo "$RESPONSE" | grep -o '"apiKey":"[^"]*"' | cut -d'"' -f4)

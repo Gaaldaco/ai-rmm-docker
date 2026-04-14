@@ -14,8 +14,11 @@ import { redis } from "../lib/redis.js";
 
 const router = Router();
 
+// ─── Agent-facing routes (no adminAuth, separate router) ────────────────────
+export const agentFacingRouter = Router();
+
 // Agent polls for pending commands
-router.get("/commands", agentAuth, async (req, res) => {
+agentFacingRouter.get("/commands", agentAuth, async (req, res) => {
   const agent = (req as any).agent;
 
   const pending = await db
@@ -41,7 +44,7 @@ router.get("/commands", agentAuth, async (req, res) => {
 });
 
 // Agent reports command result
-router.post("/:id/result", agentAuth, async (req, res) => {
+agentFacingRouter.post("/:id/result", agentAuth, async (req, res) => {
   try {
     const result = commandResultSchema.parse(req.body);
 
@@ -113,6 +116,8 @@ router.post("/:id/result", agentAuth, async (req, res) => {
     throw err;
   }
 });
+
+// ─── Admin/dashboard routes (protected by adminAuth in index.ts) ────────────
 
 // Manually trigger a command on an agent
 router.post("/manual", async (req, res) => {

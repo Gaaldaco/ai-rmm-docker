@@ -6,15 +6,17 @@ import { WebSocketServer } from "ws";
 import path from "node:path";
 import fs from "node:fs";
 
-import agentsRouter from "./routes/agents.js";
-import snapshotsRouter from "./routes/snapshots.js";
+import agentsRouter, { agentFacingRouter as agentsAgentRouter } from "./routes/agents.js";
+import snapshotsRouter, { agentFacingRouter as snapshotsAgentRouter } from "./routes/snapshots.js";
 import alertsRouter from "./routes/alerts.js";
 import servicesRouter from "./routes/services.js";
 import knowledgeBaseRouter from "./routes/knowledgeBase.js";
-import remediationRouter from "./routes/remediation.js";
+import remediationRouter, { agentFacingRouter as remediationAgentRouter } from "./routes/remediation.js";
 import consoleRouter, { purgeOldSessions } from "./routes/console.js";
 import setupRouter from "./routes/setup.js";
 import { errorHandler } from "./middleware/error.js";
+import { adminAuth } from "./middleware/adminAuth.js";
+import { rateLimit } from "./middleware/rateLimit.js";
 import { startHeartbeatMonitor } from "./lib/heartbeat.js";
 import { setupAgentWebSocket } from "./ws/agentSocket.js";
 
@@ -24,8 +26,11 @@ const PORT = Number(process.env.PORT ?? 8080);
 // ─── Security ─────────────────────────────────────────────────────────────────
 app.use(helmet());
 
-// Self-hosted tool with API-key auth — allow all origins
-app.use(cors({ origin: true, credentials: true }));
+// Restrict CORS to frontend URL when configured
+const allowedOrigins = process.env.FRONTEND_URL
+  ? [process.env.FRONTEND_URL, ...(process.env.CORS_ORIGINS?.split(',').filter(Boolean) || [])]
+  : true; // fallback to allow-all only if FRONTEND_URL not set
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 
 // ─── Body parsing ─────────────────────────────────────────────────────────────
 app.use(express.json({ limit: "2mb" }));
@@ -111,9 +116,18 @@ app.get("/install.sh", (req, res) => {
     '# Register with API',
     'echo ""',
     'echo "Registering agent..."',
-    'RESPONSE=$(curl -s -X POST "${API_URL}/api/agents/register" \\',
-    '  -H "Content-Type: application/json" \\',
-    '  -d "$JSON_PAYLOAD")',
+    ...(process.env.REGISTRATION_TOKEN
+      ? [
+          'RESPONSE=$(curl -s -X POST "${API_URL}/api/agents/register" \\',
+          '  -H "Content-Type: application/json" \\',
+          `  -H "x-registration-token: ${process.env.REGISTRATION_TOKEN}" \\`,
+          '  -d "$JSON_PAYLOAD")',
+        ]
+      : [
+          'RESPONSE=$(curl -s -X POST "${API_URL}/api/agents/register" \\',
+          '  -H "Content-Type: application/json" \\',
+          '  -d "$JSON_PAYLOAD")',
+        ]),
     '',
     'API_KEY=$(echo "$RESPONSE" | grep -o \'"apiKey":"[^"]*"\' | cut -d\'"\' -f4)',
     'AGENT_ID=$(echo "$RESPONSE" | grep -o \'"id":"[^"]*"\' | cut -d\'"\' -f4)',
@@ -137,7 +151,7 @@ app.get("/install.sh", (req, res) => {
     '',
     '# Grant passwordless sudo',
     'cat > /etc/sudoers.d/airagent <<\'SUDOERS\'',
-    'airagent ALL=(ALL) NOPASSWD: ALL',
+    'airagent ALL=(ALL) NOPASSWD: /usr/bin/systemctl, /usr/bin/journalctl, /usr/bin/apt, /usr/bin/apt-get, /usr/bin/yum, /usr/bin/dnf, /usr/bin/df, /usr/bin/du, /usr/bin/ps, /usr/bin/top, /usr/bin/netstat, /usr/bin/ss, /usr/bin/lsof, /usr/bin/cat, /usr/bin/grep, /usr/bin/tail, /usr/bin/head, /usr/bin/find, /usr/sbin/iptables, /usr/bin/ufw, /usr/bin/free, /usr/bin/uptime, /usr/bin/who, /usr/bin/last, /usr/bin/pkill, /usr/bin/killall, /usr/bin/chmod, /usr/bin/chown, /usr/bin/mkdir, /usr/bin/cp, /usr/bin/mv, /usr/bin/wget, /usr/bin/curl',
     'SUDOERS',
     'chmod 440 /etc/sudoers.d/airagent',
     '',
@@ -155,7 +169,6 @@ app.get("/install.sh", (req, res) => {
     'agent_name: "${AGENT_NAME}"',
     'snapshot_interval: 60',
     'heartbeat_interval: 30',
-    'tls_skip_verify: false',
     'CONF',
     'chmod 600 /etc/ai-remote-agent/config.yaml',
     'chown -R airagent:airagent /etc/ai-remote-agent /var/log/ai-remote-agent',
@@ -250,7 +263,14 @@ app.get("/install.ps1", (req, res) => {
     'Write-Host ""',
     'Write-Host "Registering agent..."',
     'try {',
-    '    $response = Invoke-RestMethod -Uri "$ApiUrl/api/agents/register" -Method Post -Body $body -ContentType "application/json"',
+    ...(process.env.REGISTRATION_TOKEN
+      ? [
+          `    $headers = @{ "x-registration-token" = "${process.env.REGISTRATION_TOKEN}" }`,
+          '    $response = Invoke-RestMethod -Uri "$ApiUrl/api/agents/register" -Method Post -Body $body -ContentType "application/json" -Headers $headers',
+        ]
+      : [
+          '    $response = Invoke-RestMethod -Uri "$ApiUrl/api/agents/register" -Method Post -Body $body -ContentType "application/json"',
+        ]),
     '} catch {',
     '    Write-Host "Error: Registration failed - $_" -ForegroundColor Red',
     '    exit 1',
@@ -277,7 +297,6 @@ app.get("/install.ps1", (req, res) => {
     'agent_name: "$AgentName"',
     'snapshot_interval: 60',
     'heartbeat_interval: 30',
-    'tls_skip_verify: false',
     '"@',
     '$configContent | Set-Content "$binDir\\config.yaml" -Encoding UTF8',
     '',
@@ -321,15 +340,53 @@ app.get("/install.ps1", (req, res) => {
   res.send(script);
 });
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
-app.use("/api/agents", agentsRouter);
-app.use("/api/snapshots", snapshotsRouter);
-app.use("/api/alerts", alertsRouter);
-app.use("/api/services", servicesRouter);
-app.use("/api/knowledge-base", knowledgeBaseRouter);
-app.use("/api/remediation", remediationRouter);
-app.use("/api/console", consoleRouter);
-app.use("/api/setup", setupRouter);
+// ─── Update check ───────────────────────────────────────────────────────────
+const APP_VERSION = process.env.APP_VERSION || "1.0.0";
+
+app.get("/api/version", adminAuth, async (_req, res) => {
+  try {
+    const repo = process.env.GITHUB_REPO || "Gaaldaco/ai-rmm-docker";
+    const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+      headers: { "Accept": "application/vnd.github.v3+json", "User-Agent": "ai-rmm-docker" },
+    });
+    if (!response.ok) {
+      res.json({ current: APP_VERSION, latest: null, updateAvailable: false });
+      return;
+    }
+    const release = await response.json() as { tag_name: string; html_url: string; body: string; published_at: string };
+    const latest = release.tag_name.replace(/^v/, "");
+    res.json({
+      current: APP_VERSION,
+      latest,
+      updateAvailable: latest !== APP_VERSION,
+      releaseUrl: release.html_url,
+      releaseNotes: release.body?.slice(0, 500) || "",
+      publishedAt: release.published_at,
+    });
+  } catch {
+    res.json({ current: APP_VERSION, latest: null, updateAvailable: false });
+  }
+});
+
+// ─── Rate limiting ───────────────────────────────────────────────────────────
+app.use("/api/agents/register", rateLimit(5, 60000));
+app.use("/api/console", rateLimit(20, 60000));
+app.use("/api", rateLimit(100, 60000));
+
+// ─── Agent-facing routes (no adminAuth — these use agentAuth internally) ────
+app.use("/api/agents", agentsAgentRouter);       // POST /register
+app.use("/api/snapshots", snapshotsAgentRouter); // POST /, POST /heartbeat
+app.use("/api/remediation", remediationAgentRouter); // GET /commands, POST /:id/result
+
+// ─── Admin/dashboard routes (protected by adminAuth) ────────────────────────
+app.use("/api/agents", adminAuth, agentsRouter);
+app.use("/api/snapshots", adminAuth, snapshotsRouter);
+app.use("/api/alerts", adminAuth, alertsRouter);
+app.use("/api/services", adminAuth, servicesRouter);
+app.use("/api/knowledge-base", adminAuth, knowledgeBaseRouter);
+app.use("/api/remediation", adminAuth, remediationRouter);
+app.use("/api/console", adminAuth, consoleRouter);
+app.use("/api/setup", setupRouter); // no adminAuth — needs to work before auth is configured
 
 // ─── Error handler ───────────────────────────────────────────────────────────
 app.use(errorHandler);

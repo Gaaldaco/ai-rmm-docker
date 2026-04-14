@@ -11,9 +11,8 @@ type Config struct {
 	APIUrl            string `yaml:"api_url"`
 	APIKey            string `yaml:"api_key"`
 	AgentName         string `yaml:"agent_name"`
-	SnapshotInterval  int    `yaml:"snapshot_interval"`   // seconds
-	HeartbeatInterval int    `yaml:"heartbeat_interval"`  // seconds
-	TLSSkipVerify     bool   `yaml:"tls_skip_verify"`     // skip TLS cert verification (dev only)
+	SnapshotInterval  int    `yaml:"snapshot_interval"`  // seconds
+	HeartbeatInterval int    `yaml:"heartbeat_interval"` // seconds
 }
 
 func DefaultConfigPath() string {
@@ -32,7 +31,6 @@ func Load(path string) (*Config, error) {
 	cfg := &Config{
 		SnapshotInterval:  60,
 		HeartbeatInterval: 30,
-		TLSSkipVerify:     false,
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {

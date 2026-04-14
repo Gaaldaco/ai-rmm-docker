@@ -52,7 +52,7 @@ func main() {
 	}
 
 	// Create WebSocket client with command handler
-	client = ws.NewClient(cfg.APIUrl, cfg.APIKey, cfg.TLSSkipVerify, func(cmd ws.Command) {
+	client = ws.NewClient(cfg.APIUrl, cfg.APIKey, func(cmd ws.Command) {
 		log.Printf("[agent] Received command: %s", cmd.Command)
 		result := executor.Execute(cmd.Command, executor.DefaultTimeout)
 

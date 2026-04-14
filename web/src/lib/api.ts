@@ -92,6 +92,9 @@ export const api = {
         method: 'POST', body: JSON.stringify({ message, terminalHistory, sessionId, autopilot }),
       }),
   },
+  version: {
+    check: () => request<VersionInfo>('/api/version'),
+  },
   remediation: {
     log: (params?: { agentId?: string; limit?: number }) => {
       const qs = new URLSearchParams();
@@ -239,6 +242,15 @@ export interface ConsoleMessage {
   tokenEstimate: number | null;
   remediationId: string | null;
   createdAt: string;
+}
+
+export interface VersionInfo {
+  current: string;
+  latest: string | null;
+  updateAvailable: boolean;
+  releaseUrl?: string;
+  releaseNotes?: string;
+  publishedAt?: string;
 }
 
 export interface RemediationEntry {

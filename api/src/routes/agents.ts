@@ -8,9 +8,22 @@ import { registerAgentSchema } from "../types/snapshot.js";
 
 const router = Router();
 
+// ─── Agent-facing routes (no adminAuth, separate router) ────────────────────
+export const agentFacingRouter = Router();
+
 // Register a new agent — returns the API key (shown only once)
-router.post("/register", async (req, res) => {
+agentFacingRouter.post("/register", async (req, res) => {
   try {
+    // Check registration token if configured
+    const registrationToken = process.env.REGISTRATION_TOKEN;
+    if (registrationToken) {
+      const provided = req.headers["x-registration-token"];
+      if (provided !== registrationToken) {
+        res.status(401).json({ error: "Invalid or missing registration token" });
+        return;
+      }
+    }
+
     const body = registerAgentSchema.parse(req.body);
     const rawKey = `ars_${randomBytes(32).toString("hex")}`;
     const keyHash = hashApiKey(rawKey);
@@ -42,6 +55,8 @@ router.post("/register", async (req, res) => {
     throw err;
   }
 });
+
+// ─── Admin/dashboard routes (protected by adminAuth in index.ts) ────────────
 
 // List all agents
 router.get("/", async (_req, res) => {

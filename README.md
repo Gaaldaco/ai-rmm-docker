@@ -46,7 +46,7 @@ Set `API_URL` in your `.env` to the public URL where agents can reach the API (e
 See [`.env.example`](.env.example) for all available options. All are optional — the setup wizard handles the essentials. If you want to pre-configure:
 
 - `ANTHROPIC_API_KEY` — Claude API key (or set via setup wizard)
-- `POSTGRES_PASSWORD` — Database password (defaults to `airemote2024`)
+- `POSTGRES_PASSWORD` — Database password (generated automatically by `start.sh`)
 
 ## Development
 

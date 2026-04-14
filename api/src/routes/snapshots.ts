@@ -9,8 +9,11 @@ import { setRedis } from "../lib/redis.js";
 
 const router = Router();
 
+// ─── Agent-facing routes (no adminAuth, separate router) ────────────────────
+export const agentFacingRouter = Router();
+
 // Agent submits a snapshot (authenticated)
-router.post("/", agentAuth, async (req, res) => {
+agentFacingRouter.post("/", agentAuth, async (req, res) => {
   try {
     const agent = (req as any).agent;
     const body = snapshotPayloadSchema.parse(req.body);
@@ -66,7 +69,7 @@ router.post("/", agentAuth, async (req, res) => {
 });
 
 // Agent heartbeat (lightweight)
-router.post("/heartbeat", agentAuth, async (req, res) => {
+agentFacingRouter.post("/heartbeat", agentAuth, async (req, res) => {
   const agent = (req as any).agent;
   await db
     .update(agents)
@@ -75,6 +78,8 @@ router.post("/heartbeat", agentAuth, async (req, res) => {
   await setRedis(`heartbeat:${agent.id}`, { lastSeen: Date.now() }, 90);
   res.json({ ok: true });
 });
+
+// ─── Admin/dashboard routes (protected by adminAuth in index.ts) ────────────
 
 // Get snapshots for an agent (paginated)
 router.get("/agent/:agentId", async (req, res) => {

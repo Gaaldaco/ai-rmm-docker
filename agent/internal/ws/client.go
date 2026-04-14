@@ -39,7 +39,6 @@ type CommandResult struct {
 type Client struct {
 	url            string
 	apiKey         string
-	tlsSkipVerify  bool
 	conn           *websocket.Conn
 	mu             sync.Mutex
 	connected      bool
@@ -51,7 +50,7 @@ type Client struct {
 }
 
 // NewClient creates a new WebSocket client
-func NewClient(apiURL, apiKey string, tlsSkipVerify bool, onCommand func(Command)) *Client {
+func NewClient(apiURL, apiKey string, onCommand func(Command)) *Client {
 	// Convert http(s) URL to ws(s) URL
 	wsURL := apiURL
 	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
@@ -61,12 +60,11 @@ func NewClient(apiURL, apiKey string, tlsSkipVerify bool, onCommand func(Command
 	wsURL += "/ws/agent"
 
 	return &Client{
-		url:           wsURL,
-		apiKey:        apiKey,
-		tlsSkipVerify: tlsSkipVerify,
-		done:          make(chan struct{}),
-		sendCh:        make(chan []byte, 64),
-		onCommand:     onCommand,
+		url:       wsURL,
+		apiKey:    apiKey,
+		done:      make(chan struct{}),
+		sendCh:    make(chan []byte, 64),
+		onCommand: onCommand,
 	}
 }
 
@@ -126,10 +124,7 @@ func (c *Client) dial() error {
 	dialer := websocket.Dialer{
 		HandshakeTimeout:  10 * time.Second,
 		EnableCompression: false,
-	}
-
-	if c.tlsSkipVerify {
-		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 
 	header := http.Header{}
