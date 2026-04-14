@@ -5,3 +5,5 @@ dist/
 *.log
 bin/
 agent/bin/
+.claude/
+CLAUDE.md

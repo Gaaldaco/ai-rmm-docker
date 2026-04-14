@@ -85,3 +85,13 @@ docker compose down -v
                 │  :3000  │
                 └─────────┘
 ```
+
+## License
+
+This project is licensed under the [Business Source License 1.1](LICENSE).
+
+- **Allowed**: Personal, educational, research, and internal evaluation use
+- **Not allowed**: Commercial use (selling, offering as a paid service, etc.)
+- **Change Date**: April 14, 2030 — on this date the license converts to [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+
+For commercial licensing inquiries, contact aldacogene@gmail.com.
